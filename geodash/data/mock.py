@@ -10,7 +10,7 @@ def generate_mock_data() -> Dict[str, object]:
 
     Returns a dict with:
     - polygons: List[dict]
-        Each polygon is a simple rectangular boundary for farmland.
+        Each polygon is a more realistic irregular boundary for farmland.
         Keys:
           - name: str (human-readable label)
           - region: str (categorical region name)
@@ -46,30 +46,80 @@ def generate_mock_data() -> Dict[str, object]:
     """
     rng = np.random.default_rng(42)
 
-    polygons = [
-        {
-            "name": "ไร่ A",
-            "region": "North",
-            "coordinates": [
-                [16.05, 99.85],
-                [16.05, 100.05],
-                [15.85, 100.05],
-                [15.85, 99.85],
-            ],
-        },
-        {
-            "name": "ไร่ B",
-            "region": "East",
-            "coordinates": [
-                [15.95, 100.15],
-                [15.95, 100.35],
-                [15.75, 100.35],
-                [15.75, 100.15],
-            ],
-        },
-    ]
+    def create_irregular_polygon(center_lat: float, center_lon: float, 
+                                base_radius: float, num_points: int = None) -> List[List[float]]:
+        """Create an irregular polygon around a center point."""
+        if num_points is None:
+            num_points = rng.integers(6, 12)  # Random number of points between 6-11
+        
+        # Generate angles evenly spaced around the circle
+        angles = np.linspace(0, 2 * np.pi, num_points, endpoint=False)
+        # Add some randomness to the angles
+        angle_noise = rng.normal(0, 0.3, num_points)
+        angles = angles + angle_noise
+        
+        coordinates = []
+        for angle in angles:
+            # Vary the radius for each point to create irregularity
+            radius_variation = rng.uniform(0.7, 1.3)
+            actual_radius = base_radius * radius_variation
+            
+            # Convert polar to cartesian and add to center
+            lat = center_lat + actual_radius * np.cos(angle)
+            lon = center_lon + actual_radius * np.sin(angle)
+            
+            coordinates.append([lat, lon])
+        
+        return coordinates
 
-    well_ids: List[str] = [f"WELL-{i:03d}" for i in range(1, 51)]
+    # Thai field names for realistic naming
+    thai_places = [
+        "ไร่โพธิ์", "ไร่ไผ่", "ไร่กล้วย", "ไร่มะขาม", "ไร่สวน",
+        "ไร่หนองหิน", "ไร่ดอนยาง", "ไร่คลองใหม่", "ไร่หัวสะพาน", "ไร่ทุ่งใหญ่",
+        "ไร่โนนสูง", "ไร่ลาดใหญ่", "ไร่หนองแสง", "ไร่ดงพญาไฟ", "ไร่บึงกาฬ",
+        "ไร่สามแยก", "ไร่ทุ่งทอง", "ไร่คลองเตย", "ไร่บางบัว", "ไร่นาดี"
+    ]
+    
+    # Create non-overlapping polygon centers with better spacing
+    grid_positions = [
+        (15.75, 99.80), (15.75, 100.10), (15.75, 100.40),
+        (15.90, 99.75), (15.90, 100.05), (15.90, 100.35),
+        (16.05, 99.80), (16.05, 100.10), (16.05, 100.40),
+        (16.20, 99.75), (16.20, 100.05), (16.20, 100.35),
+        (15.82, 99.95), (15.97, 100.25), (16.12, 99.90)
+    ]
+    
+    # Create polygons with sufficient spacing to avoid overlap
+    polygons = []
+    regions = ["North", "East", "South", "West"]
+    
+    # Select random subset of positions and places
+    num_polygons = 12
+    selected_positions = rng.choice(len(grid_positions), size=num_polygons, replace=False)
+    selected_places = rng.choice(thai_places, size=num_polygons, replace=False)
+    
+    for i, pos_idx in enumerate(selected_positions):
+        lat, lon = grid_positions[pos_idx]
+        place_name = selected_places[i]
+        region = regions[i % len(regions)]
+        
+        # Add smaller random offset to center to reduce overlap risk
+        lat_offset = rng.uniform(-0.015, 0.015)
+        lon_offset = rng.uniform(-0.015, 0.015)
+        
+        polygons.append({
+            "name": place_name,
+            "region": region,
+            "coordinates": create_irregular_polygon(
+                lat + lat_offset, 
+                lon + lon_offset, 
+                0.035,  # Even smaller radius to prevent overlap
+                rng.integers(6, 9)
+            ),
+        })
+
+    # Generate more wells for better coverage
+    well_ids: List[str] = [f"WELL-{i:03d}" for i in range(1, 121)]  # Increased from 50 to 120 wells
     regions = rng.choice(["North", "East", "South", "West"], size=len(well_ids))
     lats = 15.7 + rng.random(len(well_ids)) * 0.6
     lngs = 99.8 + rng.random(len(well_ids)) * 0.7
@@ -136,6 +186,3 @@ def generate_mock_data() -> Dict[str, object]:
         "cost_df": cost_df,
         "prob_df": prob_df,
     }
-
-
-
