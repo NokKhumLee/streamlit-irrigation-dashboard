@@ -10,7 +10,7 @@ Interactive geological dashboard with two-column layout: folium map on the left 
 
 ## Quickstart
 1. Create a virtual environment (recommended)
-   - Python 3.9+
+   - Python 3.9+ (Currently test on 3.10.0)
 2. Install dependencies
    ```bash
    pip install -r requirements.txt
