@@ -4,7 +4,8 @@ import pandas as pd
 import streamlit as st
 from streamlit_option_menu import option_menu
 
-from geodash.data import generate_mock_data, sidebar_filters, filter_wells
+# Updated import - now using the main data loader
+from geodash.data import load_dashboard_data, sidebar_filters, filter_wells
 from geodash.ui import (
     build_map,
     chart_ground_water_analytics,
@@ -47,8 +48,8 @@ def main() -> None:
         
         st.markdown("---")
         
-        # Generate data and filters
-        data = generate_mock_data()
+        # Load data using the new main data loader
+        data = load_dashboard_data()  # This now handles real + fallback data automatically
         filters = sidebar_filters(data["wells_df"])
         
         st.markdown("---")
