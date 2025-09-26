@@ -21,7 +21,7 @@ from geodash.plugins.examples import NotesPlugin
 
 def initialize_page_config() -> None:
     st.set_page_config(
-        page_title="Bardan (บาดาล)",
+        page_title="Badan (บาดาล)",
         page_icon="🌍",
         layout="wide",
         initial_sidebar_state="expanded",  # Changed to expanded to show the option menu
@@ -34,7 +34,7 @@ def main() -> None:
     # Sidebar with option menu
     with st.sidebar:
         selected = option_menu(
-            menu_title="Bardan (บาดาล)",
+            menu_title="Badan (บาดาล)",
             options=[
                 "Main",
                 "Water Survival Analysis", 
