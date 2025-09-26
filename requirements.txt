@@ -7,6 +7,7 @@ certifi==2025.8.3
 charset-normalizer==3.4.3
 click==8.3.0
 folium==0.20.0
+geopandas==1.0.1
 gitdb==4.0.12
 GitPython==3.1.45
 idna==3.10
@@ -27,6 +28,7 @@ pytz==2025.2
 referencing==0.36.2
 requests==2.32.5
 rpds-py==0.27.1
+shapely==2.0.6
 six==1.17.0
 smmap==5.0.2
 streamlit==1.49.1
