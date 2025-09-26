@@ -1,4 +1,4 @@
-# BaDan (บาดาล)
+# Badan (บาดาล)
 
 Interactive ground water management dashboard with multi-page navigation and analytics.
 
