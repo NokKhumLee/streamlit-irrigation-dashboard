@@ -28,7 +28,16 @@ class DataLoader:
     def __init__(self, data_dir: Union[str, Path] = "geodash/data"):
         self.data_dir = Path(data_dir)
         self.rdc_fields_dir = self.data_dir / "RDC_Fields"
-        self.groundwater_dir = self.data_dir / "groundwater"  # New: groundwater data directory
+        self.rdc_farms_dir = self.data_dir / "RDC_Farms"  # New: farm polygons directory
+        self.groundwater_dir = self.data_dir / "groundwater"
+        
+        # 20 distinct colors for farms (hex values)
+        self.farm_colors = [
+            "#FF6B6B", "#4ECDC4", "#45B7D1", "#96CEB4", "#FFEAA7",
+            "#DDA0DD", "#98D8C8", "#F7DC6F", "#BB8FCE", "#85C1E9",
+            "#F8C471", "#82E0AA", "#F1948A", "#85C1E9", "#F4D03F",
+            "#D7BDE2", "#7FB3D3", "#A9DFBF", "#F9E79F", "#FADBD8"
+        ]
         
     def load_all_data(self) -> Dict[str, object]:
         """
@@ -38,6 +47,7 @@ class DataLoader:
         Returns:
             Dict containing all dashboard data:
             - polygons: field polygons
+            - farm_polygons: farm polygons with colors
             - wells_df: well data 
             - water_levels: time series data
             - heat_points: heatmap data
@@ -48,6 +58,9 @@ class DataLoader:
         
         # Load field polygons (real data)
         polygons = self._load_field_polygons()
+        
+        # Load farm polygons (NEW)
+        farm_polygons = self._load_farm_polygons()
         
         # Load wells data (try real data first, then fallback to mock)
         wells_df = self._load_wells_data()
@@ -65,6 +78,7 @@ class DataLoader:
         # Combine real and mock data
         data = {
             "polygons": polygons,
+            "farm_polygons": farm_polygons,  # NEW
             "wells_df": wells_df,
             "water_levels": water_levels,
             "heat_points": heat_points,
@@ -72,9 +86,79 @@ class DataLoader:
             "prob_df": prob_df,
         }
         
-        print(f"✅ Data loaded: {len(polygons)} polygons, {len(data['wells_df'])} wells")
+        print(f"✅ Data loaded: {len(polygons)} field polygons, {len(farm_polygons)} farm polygons, {len(data['wells_df'])} wells")
         print(f"📍 Sample well IDs: {list(data['wells_df']['well_id'].head(3))}")
         return data
+    
+    def _load_farm_polygons(self) -> List[Dict[str, object]]:
+        """Load farm polygon data from RDC_Farms directory with distinct colors."""
+        if not GEOSPATIAL_AVAILABLE:
+            print("⚠️  GeoPandas not available. Farm polygons disabled.")
+            return []
+            
+        farm_convex_hulls_path = self.rdc_farms_dir / "farm_convex_hulls.shp"
+        
+        if not farm_convex_hulls_path.exists():
+            print(f"⚠️  {farm_convex_hulls_path} not found. Farm polygons disabled.")
+            return []
+        
+        try:
+            # Load the farm convex hulls shapefile
+            gdf = gpd.read_file(farm_convex_hulls_path)
+            
+            # Convert to WGS84 if not already
+            if gdf.crs is not None and gdf.crs != 'EPSG:4326':
+                gdf = gdf.to_crs('EPSG:4326')
+            
+            farm_polygons = []
+            
+            for i, row in gdf.iterrows():
+                try:
+                    geometry = row.geometry
+                    
+                    if geometry is None or geometry.is_empty:
+                        continue
+                        
+                    if geometry.geom_type in ['Polygon', 'MultiPolygon']:
+                        coords = self._extract_shapely_coordinates(geometry)
+                        if coords and len(coords) >= 3:  # Valid polygon needs at least 3 points
+                            
+                            # Try common field names for farm identification
+                            farm_name_fields = ['farm_name', 'farm_id', 'name', 'Farm_Name', 'FARM_NAME', 'id', 'ID']
+                            farm_name = None
+                            
+                            for field in farm_name_fields:
+                                if field in row.index and pd.notna(row[field]):
+                                    farm_name = str(row[field])
+                                    break
+                            
+                            # Fallback farm name
+                            if not farm_name:
+                                farm_name = f"Farm_{i+1}"
+                            
+                            # Assign color from our predefined palette
+                            color = self.farm_colors[i % len(self.farm_colors)]
+                            
+                            farm_polygons.append({
+                                "name": farm_name,
+                                "farm_id": i + 1,
+                                "coordinates": coords,
+                                "color": color,
+                                "fill_color": color,
+                                "fill_opacity": 0.3,
+                                "weight": 2
+                            })
+                            
+                except Exception as e:
+                    print(f"⚠️  Error processing farm row {i}: {e}")
+                    continue
+            
+            print(f"🚜 Successfully loaded {len(farm_polygons)} farm polygons")
+            return farm_polygons
+            
+        except Exception as e:
+            print(f"❌ Error loading farm polygons from {farm_convex_hulls_path}: {e}")
+            return []
     
     def _load_wells_data(self) -> pd.DataFrame:
         """Load wells data from CSV file or fallback to mock data."""
