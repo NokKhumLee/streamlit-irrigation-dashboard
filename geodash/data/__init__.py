@@ -1,11 +1,10 @@
-from .mock import generate_mock_data
+from .loader import load_dashboard_data
 from .filters import sidebar_filters, filter_wells
+from .mockup import generate_mock_data
 
 __all__ = [
-    "generate_mock_data",
-    "sidebar_filters",
+    "load_dashboard_data",  # Main interface
+    "sidebar_filters", 
     "filter_wells",
+    "generate_mock_data",  # Fallback data
 ]
-
-
-
