@@ -1,13 +1,16 @@
+# app.py - Updated to use in-map filter controls
 from typing import Optional
 
 import pandas as pd
 import streamlit as st
 from streamlit_option_menu import option_menu
 
-# Updated import - now using the main data loader
 from geodash.data import load_dashboard_data, sidebar_filters, filter_wells
 from geodash.ui import (
-    build_map,
+    # Choose one of these approaches:
+    build_map_with_controls,     # Approach 1: Checkboxes above map
+    # build_map_with_floating_controls,  # Approach 2: Floating expander
+    # build_map_with_button_bar,  # Approach 3: Toggle buttons
     chart_ground_water_analytics,
     chart_survival_rate,
     chart_probability_by_depth,
@@ -24,7 +27,7 @@ def initialize_page_config() -> None:
         page_title="Badan (บาดาล)",
         page_icon="🌍",
         layout="wide",
-        initial_sidebar_state="expanded",  # Changed to expanded to show the option menu
+        initial_sidebar_state="expanded",
     )
 
 
@@ -48,9 +51,22 @@ def main() -> None:
         
         st.markdown("---")
         
-        # Load data using the new main data loader
-        data = load_dashboard_data()  # This now handles real + fallback data automatically
-        filters = sidebar_filters(data["wells_df"])
+        # Load data
+        data = load_dashboard_data()
+        
+        # SIMPLIFIED SIDEBAR - Remove map layer controls since they're now in the map
+        st.sidebar.header("Data Filters")
+        search_q = st.sidebar.text_input("Search Well/Polygon ID")
+        region = st.sidebar.selectbox("Region", options=["All"] + sorted(data["wells_df"]["region"].unique().tolist()))
+        min_depth, max_depth = int(data["wells_df"]["depth_m"].min()), int(data["wells_df"]["depth_m"].max())
+        depth_range = st.sidebar.slider("Depth range (m)", min_value=min_depth, max_value=max_depth, value=(min_depth, max_depth), step=5)
+        
+        # Create filters dict
+        filters = {
+            "search_q": search_q, 
+            "region": region, 
+            "depth_range": depth_range,
+        }
         
         st.markdown("---")
         st.markdown(
@@ -59,6 +75,7 @@ def main() -> None:
                 <span>🌍 <em>Geological Dashboard</em></span><br>
                 📊 Interactive Well Analysis<br>
                 💧 Water Resource Management<br>
+                🎛️ Map controls moved to map area<br>
                 🗓️ 2025<br>
             </div>
             """,
@@ -78,59 +95,27 @@ def main() -> None:
     map_state = None
 
     with col_map:
-        st.subheader("Map")
+        # Build map with in-map controls
+        # Default layer settings based on current page
         if selected == "Main":
-            # Show polygons, farms, and wells; no heatmap by default
-            map_state = build_map(
-                data["polygons"],
-                data["farm_polygons"],  # Pass farm polygons
-                filtered_wells,
-                data["heat_points"],
-                show_layer_toggles=True,
-                default_show_polygons=True,
-                default_show_farms=True,  # Show farms by default
-                default_show_wells=True,
-                default_show_heatmap=False,
-            )
+            default_layers = {"show_polygons": True, "show_farms": True, "show_wells": True, "show_heatmap": False}
         elif selected == "Water Survival Analysis":
-            # Focus on wells and farms; field polygons optional
-            map_state = build_map(
-                data["polygons"],
-                data["farm_polygons"],  # Pass farm polygons
-                filtered_wells,
-                data["heat_points"],
-                show_layer_toggles=True,
-                default_show_polygons=False,
-                default_show_farms=True,  # Show farms for context
-                default_show_wells=True,
-                default_show_heatmap=False,
-            )
+            default_layers = {"show_polygons": False, "show_farms": True, "show_wells": True, "show_heatmap": False}
         elif selected == "Underground Water Discovery":
-            # Show all layers - farms, fields, wells, AND heatmap for comprehensive analysis
-            map_state = build_map(
-                data["polygons"],
-                data["farm_polygons"],  # Pass farm polygons
-                filtered_wells,
-                data["heat_points"],
-                show_layer_toggles=True,
-                default_show_polygons=True,  # ✅ Show field boundaries
-                default_show_farms=True,     # ✅ Show farm boundaries
-                default_show_wells=True,     # ✅ Show existing wells for reference
-                default_show_heatmap=True,   # ✅ Show probability heatmap for discovery
-            )
+            default_layers = {"show_polygons": True, "show_farms": True, "show_wells": True, "show_heatmap": True}
         elif selected == "AI Assistant":
-            # Minimal map; allow toggles
-            map_state = build_map(
-                data["polygons"],
-                data["farm_polygons"],  # Pass farm polygons
-                filtered_wells,
-                data["heat_points"],
-                show_layer_toggles=True,
-                default_show_polygons=True,
-                default_show_farms=False,  # Hide farms by default in AI Assistant
-                default_show_wells=False,
-                default_show_heatmap=False,
-            )
+            default_layers = {"show_polygons": True, "show_farms": False, "show_wells": False, "show_heatmap": False}
+        else:
+            default_layers = {"show_polygons": True, "show_farms": True, "show_wells": True, "show_heatmap": False}
+        
+        # Use the new map function with in-map controls
+        map_state = build_map_with_controls(
+            data["polygons"],
+            data["farm_polygons"],
+            filtered_wells,
+            data["heat_points"],
+            current_filters=default_layers,
+        )
 
     with col_dash:
         st.subheader("Dashboard")
@@ -165,12 +150,17 @@ def main() -> None:
             if not match.empty:
                 selected_row = match.iloc[0]
 
-        # Per-page dashboards
+        # Show current layer status (optional)
+        if isinstance(map_state, dict) and "layer_settings" in map_state:
+            layers = map_state["layer_settings"]
+            active_layers = sum(layers.values())
+            st.caption(f"🗺️ Map: {active_layers}/4 layers active")
+
+        # Per-page dashboards (unchanged)
         if selected == "Main":
             avg_depth = int(filtered_wells["depth_m"].mean()) if not filtered_wells.empty else 0
             st.metric("Average Depth", f"{avg_depth}m")
             
-            # Add farm statistics
             if data["farm_polygons"]:
                 st.metric("Total Farms", len(data["farm_polygons"]))
             
@@ -193,18 +183,19 @@ def main() -> None:
             chart_probability_by_depth(data["prob_df"])
             st.markdown("**Metadata**")
             metadata_panel(selected_row)
-            # Add some helpful text for the discovery page
             st.markdown("**💡 Discovery Tips**")
             st.info("""
-            🗺️ **Map Legend:**
+            🗺️ **Map Controls:** Use the checkboxes above the map to toggle layers
+            
+            **Map Legend:**
             - 🟢 Green dots: Successful wells
             - 🔴 Red dots: Failed wells  
             - 🔥 Heatmap: Probability zones (red=high, blue=low)
-            - 🚜 Colored areas: Farm boundaries (different colors per farm)
+            - 🚜 Colored areas: Farm boundaries
             - 📐 Blue areas: Field boundaries
             
             💧 **Best Discovery Zones:**
-            Look for bright red/orange heatmap areas with nearby successful wells for optimal drilling locations.
+            Look for bright red/orange heatmap areas with nearby successful wells.
             """)
 
         elif selected == "AI Assistant":
