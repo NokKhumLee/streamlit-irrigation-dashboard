@@ -80,35 +80,41 @@ def main() -> None:
     with col_map:
         st.subheader("Map")
         if selected == "Main":
-            # Show polygons and wells; no heatmap by default
+            # Show polygons, farms, and wells; no heatmap by default
             map_state = build_map(
                 data["polygons"],
+                data["farm_polygons"],  # Pass farm polygons
                 filtered_wells,
                 data["heat_points"],
                 show_layer_toggles=True,
                 default_show_polygons=True,
+                default_show_farms=True,  # Show farms by default
                 default_show_wells=True,
                 default_show_heatmap=False,
             )
         elif selected == "Water Survival Analysis":
-            # Focus on wells; polygons optional
+            # Focus on wells and farms; field polygons optional
             map_state = build_map(
                 data["polygons"],
+                data["farm_polygons"],  # Pass farm polygons
                 filtered_wells,
                 data["heat_points"],
                 show_layer_toggles=True,
                 default_show_polygons=False,
+                default_show_farms=True,  # Show farms for context
                 default_show_wells=True,
                 default_show_heatmap=False,
             )
         elif selected == "Underground Water Discovery":
-            # FIXED: Show all layers - polygons, wells, AND heatmap for comprehensive analysis
+            # Show all layers - farms, fields, wells, AND heatmap for comprehensive analysis
             map_state = build_map(
                 data["polygons"],
+                data["farm_polygons"],  # Pass farm polygons
                 filtered_wells,
                 data["heat_points"],
                 show_layer_toggles=True,
                 default_show_polygons=True,  # ✅ Show field boundaries
+                default_show_farms=True,     # ✅ Show farm boundaries
                 default_show_wells=True,     # ✅ Show existing wells for reference
                 default_show_heatmap=True,   # ✅ Show probability heatmap for discovery
             )
@@ -116,10 +122,12 @@ def main() -> None:
             # Minimal map; allow toggles
             map_state = build_map(
                 data["polygons"],
+                data["farm_polygons"],  # Pass farm polygons
                 filtered_wells,
                 data["heat_points"],
                 show_layer_toggles=True,
                 default_show_polygons=True,
+                default_show_farms=False,  # Hide farms by default in AI Assistant
                 default_show_wells=False,
                 default_show_heatmap=False,
             )
@@ -161,6 +169,11 @@ def main() -> None:
         if selected == "Main":
             avg_depth = int(filtered_wells["depth_m"].mean()) if not filtered_wells.empty else 0
             st.metric("Average Depth", f"{avg_depth}m")
+            
+            # Add farm statistics
+            if data["farm_polygons"]:
+                st.metric("Total Farms", len(data["farm_polygons"]))
+            
             st.markdown("**Metadata**")
             metadata_panel(selected_row)
             st.markdown("**Cost Estimation (by depth)**")
@@ -187,7 +200,8 @@ def main() -> None:
             - 🟢 Green dots: Successful wells
             - 🔴 Red dots: Failed wells  
             - 🔥 Heatmap: Probability zones (red=high, blue=low)
-            - 📐 Polygons: Field boundaries
+            - 🚜 Colored areas: Farm boundaries (different colors per farm)
+            - 📐 Blue areas: Field boundaries
             
             💧 **Best Discovery Zones:**
             Look for bright red/orange heatmap areas with nearby successful wells for optimal drilling locations.
