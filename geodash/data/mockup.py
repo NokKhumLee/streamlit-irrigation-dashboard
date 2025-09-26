@@ -23,6 +23,10 @@ def generate_mock_data() -> Dict[str, object]:
     """
     rng = np.random.default_rng(42)
 
+    # Define Dan Chang district boundaries (consistent for all data)
+    dan_chang_lat_min, dan_chang_lat_max = 14.85, 15.05  # North-South range
+    dan_chang_lng_min, dan_chang_lng_max = 99.50, 99.75  # East-West range
+
     # Mock field polygons - located in Dan Chang District area
     polygons = [
         {
@@ -58,12 +62,7 @@ def generate_mock_data() -> Dict[str, object]:
     ]
 
     # Mock well data - located in อำเภอด่านช้าง (Dan Chang District), Suphan Buri
-    # Dan Chang District coordinates: approximately 14.9°N, 99.6°E
     well_ids: List[str] = [f"WELL-{i:03d}" for i in range(1, 51)]
-    
-    # Dan Chang district boundaries (approximate)
-    dan_chang_lat_min, dan_chang_lat_max = 14.85, 15.05  # North-South range
-    dan_chang_lng_min, dan_chang_lng_max = 99.50, 99.75  # East-West range
     
     # Generate wells within Dan Chang district
     lats = dan_chang_lat_min + rng.random(len(well_ids)) * (dan_chang_lat_max - dan_chang_lat_min)
@@ -107,13 +106,34 @@ def generate_mock_data() -> Dict[str, object]:
     water_levels = water_levels.stack().reset_index()
     water_levels.columns = ["date", "well_id", "water_level_m"]
 
-    # Mock heatmap points - within Dan Chang district area
+    # Mock heatmap points - ALIGNED with Dan Chang district area (same boundaries as wells)
     heat_points = []
     for _ in range(300):
+        # Use the SAME boundary variables as wells to ensure perfect alignment
         lat = dan_chang_lat_min + rng.random() * (dan_chang_lat_max - dan_chang_lat_min)
         lon = dan_chang_lng_min + rng.random() * (dan_chang_lng_max - dan_chang_lng_min)
         weight = float(rng.uniform(0.2, 1.0))
         heat_points.append([lat, lon, weight])
+
+    # BONUS: Add some heatmap points clustered around actual wells for more realistic visualization
+    # This creates correlation between well locations and probability heatmap
+    for _, well in wells_df.iterrows():
+        # Add 2-4 heatmap points near each well with slight randomness
+        num_nearby_points = rng.integers(2, 5)
+        for _ in range(num_nearby_points):
+            # Small offset around each well (within ~1km radius)
+            lat_offset = rng.normal(0, 0.005)  # ~0.5km standard deviation
+            lon_offset = rng.normal(0, 0.005)
+            
+            # Ensure points stay within district boundaries
+            nearby_lat = np.clip(well['lat'] + lat_offset, dan_chang_lat_min, dan_chang_lat_max)
+            nearby_lon = np.clip(well['lon'] + lon_offset, dan_chang_lng_min, dan_chang_lng_max)
+            
+            # Higher weight for areas near successful wells
+            base_weight = 0.8 if well['survived'] else 0.4
+            weight = float(np.clip(rng.normal(base_weight, 0.2), 0.1, 1.0))
+            
+            heat_points.append([nearby_lat, nearby_lon, weight])
 
     # Mock cost and probability data
     depth_bins = np.arange(50, 251, 25)
