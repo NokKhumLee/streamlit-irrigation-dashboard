@@ -52,7 +52,7 @@ def build_map(
             )
             folium.CircleMarker(
                 location=[float(r["lat"]), float(r["lon"])],
-                radius=2,
+                radius=1,
                 color="#238b45" if r["survived"] else "#cb181d",
                 fill=True,
                 fill_opacity=0.8,

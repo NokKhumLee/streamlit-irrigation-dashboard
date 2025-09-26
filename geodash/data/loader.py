@@ -28,7 +28,7 @@ class DataLoader:
     def __init__(self, data_dir: Union[str, Path] = "geodash/data"):
         self.data_dir = Path(data_dir)
         self.rdc_fields_dir = self.data_dir / "RDC_Fields"
-        self.wells_data_dir = self.data_dir / "wells"  # For future real wells data
+        self.groundwater_dir = self.data_dir / "groundwater"  # New: groundwater data directory
         
     def load_all_data(self) -> Dict[str, object]:
         """
@@ -49,21 +49,215 @@ class DataLoader:
         # Load field polygons (real data)
         polygons = self._load_field_polygons()
         
+        # Load wells data (try real data first, then fallback to mock)
+        wells_df = self._load_wells_data()
+        print(f"🔍 Wells data source: {'REAL CSV' if not wells_df.empty and 'Mock' not in str(wells_df.iloc[0]['well_id']) else 'MOCK'}")
+        
         # Load other data (mock for now, but can be replaced with real data loaders)
         mock_data = generate_fallback_data()
+        
+        # Generate derived data based on real wells if available
+        water_levels = self._generate_water_levels_for_wells(wells_df)
+        heat_points = self._generate_heat_points_for_wells(wells_df)
+        cost_df = mock_data["cost_df"]  # Keep mock cost data for now
+        prob_df = mock_data["prob_df"]  # Keep mock probability data for now
         
         # Combine real and mock data
         data = {
             "polygons": polygons,
-            "wells_df": mock_data["wells_df"],
-            "water_levels": mock_data["water_levels"], 
-            "heat_points": mock_data["heat_points"],
-            "cost_df": mock_data["cost_df"],
-            "prob_df": mock_data["prob_df"],
+            "wells_df": wells_df,
+            "water_levels": water_levels,
+            "heat_points": heat_points,
+            "cost_df": cost_df,
+            "prob_df": prob_df,
         }
         
         print(f"✅ Data loaded: {len(polygons)} polygons, {len(data['wells_df'])} wells")
+        print(f"📍 Sample well IDs: {list(data['wells_df']['well_id'].head(3))}")
         return data
+    
+    def _load_wells_data(self) -> pd.DataFrame:
+        """Load wells data from CSV file or fallback to mock data."""
+        gov_groundwater_file = self.groundwater_dir / "gov_groundwater_scope.csv"
+        
+        if gov_groundwater_file.exists():
+            try:
+                # Load the government groundwater CSV
+                df = pd.read_csv(gov_groundwater_file, encoding='utf-8')
+                print(f"📊 Loading real groundwater data from {gov_groundwater_file}")
+                
+                # Clean and standardize the data
+                wells_df = self._process_groundwater_csv(df)
+                
+                if not wells_df.empty:
+                    print(f"✅ Successfully loaded {len(wells_df)} wells from government data")
+                    return wells_df
+                else:
+                    print("⚠️  No valid wells found in government data. Using mock data.")
+                    
+            except Exception as e:
+                print(f"❌ Error loading government groundwater data: {e}")
+                
+        else:
+            print(f"⚠️  Government groundwater file not found at {gov_groundwater_file}. Using mock data.")
+        
+        # Fallback to mock data
+        print("🔄 Using mock wells data")
+        return generate_fallback_data()["wells_df"]
+    
+    def _process_groundwater_csv(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Process and clean the government groundwater CSV data."""
+        try:
+            # Create a copy to avoid modifying original
+            processed_df = df.copy()
+            
+            # Column mapping from Thai CSV to our standard format
+            column_mapping = {
+                'หมายเลขบ่อ': 'well_id',
+                'ตำบล': 'tambon',
+                'อำเภอ': 'amphoe', 
+                'จังหวัด': 'province',
+                'ประเภทบ่อ': 'well_type',
+                'ความลึกเจาะ': 'depth_drilled',
+                'ความลึกพัฒนา': 'depth_developed',
+                'ปริมาณน้ำ': 'water_volume',
+                'Latitude': 'lat',
+                'Longitude': 'lon'
+            }
+            
+            # Rename columns
+            processed_df = processed_df.rename(columns=column_mapping)
+            
+            # Ensure required columns exist
+            required_cols = ['well_id', 'lat', 'lon']
+            missing_cols = [col for col in required_cols if col not in processed_df.columns]
+            if missing_cols:
+                print(f"❌ Missing required columns: {missing_cols}")
+                return pd.DataFrame()
+            
+            # Clean and convert data types
+            processed_df['lat'] = pd.to_numeric(processed_df['lat'], errors='coerce')
+            processed_df['lon'] = pd.to_numeric(processed_df['lon'], errors='coerce')
+            
+            # Use depth_drilled as primary depth, fallback to depth_developed
+            if 'depth_drilled' in processed_df.columns:
+                processed_df['depth_m'] = pd.to_numeric(processed_df['depth_drilled'], errors='coerce')
+            elif 'depth_developed' in processed_df.columns:
+                processed_df['depth_m'] = pd.to_numeric(processed_df['depth_developed'], errors='coerce')
+            else:
+                # Generate random depths if no depth data available
+                processed_df['depth_m'] = np.random.randint(40, 200, size=len(processed_df))
+                print("⚠️  No depth data found, using random depths")
+            
+            # Create region from amphoe (district)
+            if 'amphoe' in processed_df.columns:
+                processed_df['region'] = processed_df['amphoe'].fillna('Unknown')
+            else:
+                processed_df['region'] = 'Unknown'
+            
+            # Generate survival status based on water volume if available
+            if 'water_volume' in processed_df.columns:
+                water_vol = pd.to_numeric(processed_df['water_volume'], errors='coerce')
+                # Wells with water volume > 1 m³/h are considered successful
+                processed_df['survived'] = (water_vol > 1.0).fillna(True)
+            else:
+                # Random survival rate if no water volume data
+                processed_df['survived'] = np.random.choice([True, False], 
+                                                           size=len(processed_df), 
+                                                           p=[0.75, 0.25])
+            
+            # Remove rows with invalid coordinates
+            processed_df = processed_df.dropna(subset=['lat', 'lon'])
+            processed_df = processed_df[
+                (processed_df['lat'].between(-90, 90)) & 
+                (processed_df['lon'].between(-180, 180))
+            ]
+            
+            # Fill missing depth values
+            processed_df['depth_m'] = processed_df['depth_m'].fillna(
+                processed_df['depth_m'].median()
+            )
+            
+            # Select final columns
+            final_cols = ['well_id', 'region', 'lat', 'lon', 'depth_m', 'survived']
+            processed_df = processed_df[final_cols]
+            
+            # Ensure well_id is string
+            processed_df['well_id'] = processed_df['well_id'].astype(str)
+            
+            print(f"📊 Processed {len(processed_df)} wells successfully")
+            print(f"📍 Coordinate range: Lat {processed_df['lat'].min():.3f}-{processed_df['lat'].max():.3f}, "
+                  f"Lon {processed_df['lon'].min():.3f}-{processed_df['lon'].max():.3f}")
+            print(f"🏔️  Depth range: {processed_df['depth_m'].min():.1f}-{processed_df['depth_m'].max():.1f}m")
+            print(f"✅ Success rate: {processed_df['survived'].mean():.1%}")
+            
+            return processed_df
+            
+        except Exception as e:
+            print(f"❌ Error processing groundwater CSV: {e}")
+            return pd.DataFrame()
+    
+    def _generate_water_levels_for_wells(self, wells_df: pd.DataFrame) -> pd.DataFrame:
+        """Generate time series water level data for the wells."""
+        if wells_df.empty:
+            return generate_fallback_data()["water_levels"]
+        
+        # Generate 12 months of data
+        months = pd.date_range(end=pd.Timestamp.today().normalize(), periods=12, freq="MS")
+        well_ids = wells_df['well_id'].tolist()
+        
+        # Generate realistic water levels based on well depth and survival
+        water_levels_data = []
+        
+        for well_id in well_ids:
+            well_info = wells_df[wells_df['well_id'] == well_id].iloc[0]
+            depth = well_info['depth_m']
+            survived = well_info['survived']
+            
+            # Base water level depends on depth and survival
+            if survived:
+                base_level = max(2.0, depth * 0.05)  # Successful wells have decent water
+            else:
+                base_level = max(1.0, depth * 0.02)  # Failed wells have low water
+            
+            # Add seasonal variation
+            for i, date in enumerate(months):
+                seasonal_factor = 1 + 0.3 * np.sin(2 * np.pi * i / 12)  # Annual cycle
+                noise = np.random.normal(0, 0.2)
+                water_level = max(0.5, base_level * seasonal_factor + noise)
+                
+                water_levels_data.append({
+                    'date': date,
+                    'well_id': well_id,
+                    'water_level_m': water_level
+                })
+        
+        return pd.DataFrame(water_levels_data)
+    
+    def _generate_heat_points_for_wells(self, wells_df: pd.DataFrame) -> List[List[float]]:
+        """Generate heatmap points based on well locations and success rates."""
+        if wells_df.empty:
+            return generate_fallback_data()["heat_points"]
+        
+        heat_points = []
+        
+        # Add heat points based on well locations
+        for _, well in wells_df.iterrows():
+            lat, lon = well['lat'], well['lon']
+            survived = well['survived']
+            
+            # Weight based on success
+            weight = 0.8 if survived else 0.3
+            heat_points.append([lat, lon, weight])
+            
+            # Add some nearby points with lower weights for smooth heatmap
+            for _ in range(3):
+                noise_lat = lat + np.random.normal(0, 0.01)
+                noise_lon = lon + np.random.normal(0, 0.01) 
+                noise_weight = weight * np.random.uniform(0.3, 0.7)
+                heat_points.append([noise_lat, noise_lon, noise_weight])
+        
+        return heat_points
     
     def _load_field_polygons(self) -> List[Dict[str, object]]:
         """Load field polygon data from RDC_Fields directory."""

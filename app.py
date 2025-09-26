@@ -102,15 +102,15 @@ def main() -> None:
                 default_show_heatmap=False,
             )
         elif selected == "Underground Water Discovery":
-            # Focus on heatmap; hide wells/polygons by default
+            # FIXED: Show all layers - polygons, wells, AND heatmap for comprehensive analysis
             map_state = build_map(
                 data["polygons"],
                 filtered_wells,
                 data["heat_points"],
                 show_layer_toggles=True,
-                default_show_polygons=False,
-                default_show_wells=False,
-                default_show_heatmap=True,
+                default_show_polygons=True,  # ✅ Show field boundaries
+                default_show_wells=True,     # ✅ Show existing wells for reference
+                default_show_heatmap=True,   # ✅ Show probability heatmap for discovery
             )
         elif selected == "AI Assistant":
             # Minimal map; allow toggles
@@ -180,6 +180,18 @@ def main() -> None:
             chart_probability_by_depth(data["prob_df"])
             st.markdown("**Metadata**")
             metadata_panel(selected_row)
+            # Add some helpful text for the discovery page
+            st.markdown("**💡 Discovery Tips**")
+            st.info("""
+            🗺️ **Map Legend:**
+            - 🟢 Green dots: Successful wells
+            - 🔴 Red dots: Failed wells  
+            - 🔥 Heatmap: Probability zones (red=high, blue=low)
+            - 📐 Polygons: Field boundaries
+            
+            💧 **Best Discovery Zones:**
+            Look for bright red/orange heatmap areas with nearby successful wells for optimal drilling locations.
+            """)
 
         elif selected == "AI Assistant":
             st.markdown("**Assistant**")
