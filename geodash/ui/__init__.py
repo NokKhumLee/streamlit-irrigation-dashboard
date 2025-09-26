@@ -11,6 +11,3 @@ __all__ = [
     "metadata_panel",
     "download_button",
 ]
-
-
-
