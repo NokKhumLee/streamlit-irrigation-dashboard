@@ -273,7 +273,7 @@ def main() -> None:
                 st.markdown("**🌧️ Rain Statistics (1 Year)**")
                 st.success("✅ Rain data loaded for selected farm location")
                 chart_rain_statistics(rain_data, rain_stats)
-                chart_rain_frequency(rain_stats)
+                # chart_rain_frequency(rain_stats)
                 st.markdown("---")
             
             st.markdown("**Ground Water Analytics**")
