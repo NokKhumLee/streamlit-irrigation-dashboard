@@ -21,15 +21,27 @@ except ImportError:
 class RainDataService:
     """Service for fetching and processing historical rain data from Open-Meteo API."""
     
-    def __init__(self):
-        """Initialize the rain data service with API client setup."""
+    def __init__(self, enable_cache: bool = False):
+        """
+        Initialize the rain data service with API client setup.
+        
+        Args:
+            enable_cache: If True, enable SQLite caching of API requests. Default: False
+        """
         if openmeteo_requests is None:
             self.client = None
             return
             
-        # Setup the Open-Meteo API client with cache and retry on error
-        cache_session = requests_cache.CachedSession('.cache', expire_after=-1)
-        retry_session = retry(cache_session, retries=5, backoff_factor=0.2)
+        # Setup the Open-Meteo API client with optional cache and retry on error
+        if enable_cache:
+            cache_session = requests_cache.CachedSession('.cache', expire_after=-1)
+            retry_session = retry(cache_session, retries=5, backoff_factor=0.2)
+        else:
+            # Use regular session without caching
+            import requests
+            regular_session = requests.Session()
+            retry_session = retry(regular_session, retries=5, backoff_factor=0.2)
+            
         self.client = openmeteo_requests.Client(session=retry_session)
     
     def get_rain_data(
@@ -189,9 +201,14 @@ class RainDataService:
 # Global instance for caching
 _rain_service = None
 
-def get_rain_service() -> RainDataService:
-    """Get or create the global rain service instance."""
+def get_rain_service(enable_cache: bool = False) -> RainDataService:
+    """
+    Get or create the global rain service instance.
+    
+    Args:
+        enable_cache: If True, enable SQLite caching of API requests. Default: False
+    """
     global _rain_service
     if _rain_service is None:
-        _rain_service = RainDataService()
+        _rain_service = RainDataService(enable_cache=enable_cache)
     return _rain_service
