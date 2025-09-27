@@ -41,3 +41,6 @@ typing_extensions==4.15.0
 tzdata==2025.2
 urllib3==2.5.0
 xyzservices==2025.4.0
+openmeteo-requests==1.7.2
+requests-cache==1.2.1
+retry-requests==2.0.0

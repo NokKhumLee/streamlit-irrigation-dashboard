@@ -10,6 +10,8 @@ from .charts import (
     chart_survival_rate,
     chart_probability_by_depth,
     chart_cost_estimation,
+    chart_rain_statistics,
+    chart_rain_frequency,
 )
 from .widgets import metadata_panel, download_button
 
@@ -22,6 +24,8 @@ __all__ = [
     "chart_survival_rate",
     "chart_probability_by_depth",
     "chart_cost_estimation",
+    "chart_rain_statistics",
+    "chart_rain_frequency",
     "metadata_panel",
     "download_button",
 ]

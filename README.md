@@ -24,6 +24,7 @@ Interactive ground water management dashboard with multi-page navigation and ana
 - Time series water level charts
 - Success/failure rate visualization
 - Well performance tracking
+- **🌧️ Rain Statistics**: Click on farm polygons to view 1-year historical rainfall data
 
 **🔍 Underground Water Discovery**
 - Probability heatmap for optimal drilling locations
@@ -51,7 +52,7 @@ Interactive ground water management dashboard with multi-page navigation and ana
 
 ## Tech Stack
 
-Streamlit + Folium mapping + Altair charts + Pandas
+Streamlit + Folium mapping + Altair charts + Pandas + Open-Meteo API (for rain data)
 
 ## Adding Real Data
 

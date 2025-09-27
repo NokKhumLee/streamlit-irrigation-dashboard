@@ -6,6 +6,7 @@ import streamlit as st
 from streamlit_option_menu import option_menu
 
 from geodash.data import load_dashboard_data, sidebar_filters, filter_wells
+from geodash.data.rain_service import get_rain_service
 from geodash.ui import (
     # Choose one of these approaches:
     build_map_with_controls,     # Approach 1: Checkboxes above map
@@ -15,11 +16,66 @@ from geodash.ui import (
     chart_survival_rate,
     chart_probability_by_depth,
     chart_cost_estimation,
+    chart_rain_statistics,
+    chart_rain_frequency,
     metadata_panel,
     download_button,
 )
 from geodash.plugins import PluginRegistry
 from geodash.plugins.examples import NotesPlugin
+
+
+def _point_in_polygon(lat: float, lon: float, polygon_coords: list) -> bool:
+    """
+    Check if a point is inside a polygon using ray casting algorithm.
+    
+    Args:
+        lat: Latitude of the point
+        lon: Longitude of the point
+        polygon_coords: List of [lat, lon] coordinate pairs forming the polygon
+        
+    Returns:
+        True if point is inside polygon, False otherwise
+    """
+    x, y = lon, lat
+    n = len(polygon_coords)
+    inside = False
+    
+    p1x, p1y = polygon_coords[0]
+    for i in range(1, n + 1):
+        p2x, p2y = polygon_coords[i % n]
+        if y > min(p1y, p2y):
+            if y <= max(p1y, p2y):
+                if x <= max(p1x, p2x):
+                    if p1y != p2y:
+                        xinters = (y - p1y) * (p2x - p1x) / (p2y - p1y) + p1x
+                    if p1x == p2x or x <= xinters:
+                        inside = not inside
+        p1x, p1y = p2x, p2y
+    
+    return inside
+
+
+def _get_polygon_center(polygon_coords: list) -> tuple:
+    """
+    Get the center point of a polygon.
+    
+    Args:
+        polygon_coords: List of [lat, lon] coordinate pairs forming the polygon
+        
+    Returns:
+        Tuple of (center_lat, center_lon)
+    """
+    if not polygon_coords:
+        return 0.0, 0.0
+    
+    lats = [coord[0] for coord in polygon_coords]
+    lons = [coord[1] for coord in polygon_coords]
+    
+    center_lat = sum(lats) / len(lats)
+    center_lon = sum(lons) / len(lons)
+    
+    return center_lat, center_lon
 
 
 def initialize_page_config() -> None:
@@ -53,6 +109,7 @@ def main() -> None:
         
         # Load data
         data = load_dashboard_data()
+        
         
         # SIMPLIFIED SIDEBAR - Remove map layer controls since they're now in the map
         st.sidebar.header("Data Filters")
@@ -93,6 +150,9 @@ def main() -> None:
     selected_well_id: Optional[str] = None
     selected_row = None
     map_state = None
+    selected_farm_coordinates = None
+    rain_data = None
+    rain_stats = None
 
     with col_map:
         # Build map with in-map controls
@@ -129,20 +189,57 @@ def main() -> None:
                 else:
                     st.warning("Well ID not found.")
 
-        # Nearest well to last map click as a fallback selection
-        if selected_well_id is None and isinstance(map_state, dict):
+        # Handle map clicks for wells and farms
+        if isinstance(map_state, dict):
             last_click = map_state.get("last_object_clicked")
+            farm_polygons = map_state.get("farm_polygons", [])
+            
+            
             if isinstance(last_click, dict):
                 lat = last_click.get("lat")
                 lng = last_click.get("lng")
-                if lat is not None and lng is not None and not data["wells_df"].empty:
-                    df = data["wells_df"].copy()
-                    df["dist"] = (
-                        (df["lat"] - float(lat)) ** 2 + (df["lon"] - float(lng)) ** 2
-                    )
-                    nearest = df.nsmallest(1, "dist")
-                    if not nearest.empty and nearest.iloc[0]["dist"] < 0.0005:
-                        selected_well_id = str(nearest.iloc[0]["well_id"])
+                
+                if lat is not None and lng is not None:
+                    # Check if click is on a farm polygon
+                    clicked_farm = None
+                    for farm in farm_polygons:
+                        # Try point-in-polygon first
+                        if _point_in_polygon(float(lat), float(lng), farm["coordinates"]):
+                            clicked_farm = farm
+                            break
+                        
+                        # Fallback: check if click is close to farm center (within 0.01 degrees ≈ 1km)
+                        center_lat, center_lon = _get_polygon_center(farm["coordinates"])
+                        distance = ((float(lat) - center_lat) ** 2 + (float(lng) - center_lon) ** 2) ** 0.5
+                        
+                        if distance < 0.01:  # Within ~1km
+                            clicked_farm = farm
+                            break
+                    
+                    if clicked_farm:
+                        # Farm clicked - get rain data
+                        selected_farm_coordinates = clicked_farm["coordinates"]
+                        rain_service = get_rain_service()
+                        
+                        if rain_service.client is not None:
+                            center_lat, center_lon = rain_service.get_farm_center_coordinates(selected_farm_coordinates)
+                            
+                            with st.spinner("Fetching rain data..."):
+                                rain_data = rain_service.get_rain_data(center_lat, center_lon, days_back=365)
+                                if rain_data is not None:
+                                    rain_stats = rain_service.get_rain_statistics(rain_data)
+                        else:
+                            st.warning("Rain data service is not available. Please install required packages: openmeteo-requests, requests-cache, retry-requests")
+                    
+                    # Check for nearest well if no farm clicked
+                    elif not data["wells_df"].empty:
+                        df = data["wells_df"].copy()
+                        df["dist"] = (
+                            (df["lat"] - float(lat)) ** 2 + (df["lon"] - float(lng)) ** 2
+                        )
+                        nearest = df.nsmallest(1, "dist")
+                        if not nearest.empty and nearest.iloc[0]["dist"] < 0.0005:
+                            selected_well_id = str(nearest.iloc[0]["well_id"])
 
         # Selected row
         if selected_well_id is not None:
@@ -171,12 +268,24 @@ def main() -> None:
             download_button(filtered_wells)
 
         elif selected == "Water Survival Analysis":
+            # Show rain data if farm is selected
+            if selected_farm_coordinates is not None and rain_data is not None:
+                st.markdown("**🌧️ Rain Statistics (1 Year)**")
+                st.success("✅ Rain data loaded for selected farm location")
+                chart_rain_statistics(rain_data, rain_stats)
+                chart_rain_frequency(rain_stats)
+                st.markdown("---")
+            
             st.markdown("**Ground Water Analytics**")
             chart_ground_water_analytics(data["water_levels"], selected_well_id)
             st.markdown("**Survival Rate**")
             chart_survival_rate(filtered_wells)
             st.markdown("**Metadata**")
             metadata_panel(selected_row)
+            
+            # Instructions for rain data
+            if selected_farm_coordinates is None:
+                st.info("💡 **Tip:** Click on a farm polygon in the map to view rain statistics for that location.")
 
         elif selected == "Underground Water Discovery":
             st.markdown("**Ground Water Discovery**")

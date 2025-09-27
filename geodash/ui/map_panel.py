@@ -47,8 +47,10 @@ def build_map_with_controls(
 
     # Farm polygons layer
     if show_farms and farm_polygons:
-        for farm_poly in farm_polygons:
+        for i, farm_poly in enumerate(farm_polygons):
             coords = farm_poly["coordinates"] + [farm_poly["coordinates"][0]]
+            farm_id = farm_poly.get('farm_id', f'farm_{i}')
+            
             folium.Polygon(
                 locations=coords,
                 color=farm_poly.get("color", "#FF6B6B"),
@@ -56,9 +58,9 @@ def build_map_with_controls(
                 fill=True,
                 fill_color=farm_poly.get("fill_color", farm_poly.get("color", "#FF6B6B")),
                 fill_opacity=farm_poly.get("fill_opacity", 0.3),
-                tooltip=f"🚜 {farm_poly['name']} (Farm ID: {farm_poly.get('farm_id', 'N/A')})",
+                tooltip=f"🚜 {farm_poly['name']} (Farm ID: {farm_id})",
                 popup=folium.Popup(
-                    f"<b>🚜 {farm_poly['name']}</b><br>Farm ID: {farm_poly.get('farm_id', 'N/A')}<br>Type: Farm Boundary",
+                    f"<b>🚜 {farm_poly['name']}</b><br>Farm ID: {farm_id}<br>Type: Farm Boundary<br>Click to view rain data",
                     max_width=250
                 ),
             ).add_to(fmap)
@@ -113,7 +115,8 @@ def build_map_with_controls(
             "show_farms": show_farms,
             "show_wells": show_wells,
             "show_heatmap": show_heatmap,
-        }
+        },
+        "farm_polygons": farm_polygons if show_farms else []
     }
 
 
