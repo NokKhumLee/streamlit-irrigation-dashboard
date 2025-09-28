@@ -18,26 +18,28 @@ def sidebar_filters(wells_df: pd.DataFrame) -> Dict[str, object]:
     st.sidebar.subheader("🏚️ Distance to Farm")
     
     if 'distance_to_farm' in wells_df.columns and not wells_df.empty:
-        min_distance = int(wells_df["distance_to_farm"].min())
-        actual_max_distance = int(wells_df["distance_to_farm"].max())
+        min_distance_m = int(wells_df["distance_to_farm"].min())
+        actual_max_distance_m = int(wells_df["distance_to_farm"].max())
         
-        # Set maximum to 30km, regardless of actual data max
-        max_distance = 30000  # Always cap at 30km
+        # Convert to kilometers for the slider
+        min_distance_km = min_distance_m / 1000
+        max_distance_km = 30.0  # 30km maximum
+        default_distance_km = 10.0  # 10km default
         
-        # Default to 10km (10,000m)
-        default_max_distance = 10000
-        
-        distance_range = st.sidebar.slider(
-            "Max distance to farm (m)", 
-            min_value=min_distance, 
-            max_value=max_distance, 
-            value=default_max_distance, 
-            step=500,
+        distance_range_km = st.sidebar.slider(
+            "Max distance to farm (km)", 
+            min_value=min_distance_km, 
+            max_value=max_distance_km, 
+            value=default_distance_km, 
+            step=0.5,
             help="Filter wells by maximum distance to nearest farm (default: 10km, max: 30km)"
         )
         
-        # Show distance in km for better readability
-        st.sidebar.caption(f"Current filter: ≤ {distance_range/1000:.1f} km")
+        # Convert back to meters for internal use
+        distance_range = int(distance_range_km * 1000)
+        
+        # Show current filter value
+        st.sidebar.caption(f"Current filter: ≤ {distance_range_km:.1f} km")
         
         # Show how many wells are within common distances (based on actual data)
         if not wells_df.empty:
@@ -55,10 +57,10 @@ def sidebar_filters(wells_df: pd.DataFrame) -> Dict[str, object]:
             • Within 20km: {within_20km:,}
             • Within 30km: {within_30km:,}
             • Total available: {len(wells_df):,}
-            • Actual max: {actual_max_distance/1000:.1f}km
+            • Actual max: {actual_max_distance_m/1000:.1f}km
             """)
     else:
-        distance_range = 10000  # Default 10km
+        distance_range = 10000  # Default 10km in meters
         st.sidebar.info("Distance data not available")
     
     # Map Layer Controls
