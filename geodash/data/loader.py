@@ -1,18 +1,18 @@
-# geodash/data/loader.py - Updated for farm-based time series
+# geodash/data/loader.py - Updated for farm-based time series and distance filtering
 
 """
 Main data loader hub for the geological dashboard.
 Updated to handle farm-based time series instead of well-based time series.
+Now includes distance_to_farm filtering capability.
 """
 from pathlib import Path
-from typing import Dict, Union
+from typing import Dict, Union, Optional
 import logging
 
 from .data_loaders import (
     WellsLoader,
     PolygonsLoader, 
     FarmsLoader,
-    # TimeSeriesLoader,  # Not needed for farm-based approach
     HeatmapLoader
 )
 from .mockup import generate_mock_data
@@ -26,7 +26,7 @@ logger = logging.getLogger("DataLoader")
 class DashboardDataLoader:
     """
     Main coordinator for all dashboard data loading.
-    Updated to handle farm-based time series data.
+    Updated to handle farm-based time series data and distance filtering.
     """
     
     def __init__(self, data_dir: Union[str, Path] = "geodash/data"):
@@ -43,20 +43,22 @@ class DashboardDataLoader:
         self.wells_loader = WellsLoader(data_dir)
         self.polygons_loader = PolygonsLoader(data_dir)
         self.farms_loader = FarmsLoader(data_dir)
-        # Remove timeseries_loader since we're generating farm-based data directly
         self.heatmap_loader = HeatmapLoader(data_dir)
         
         logger.info("✅ All specialized loaders initialized")
     
-    def load_all_data(self) -> Dict[str, object]:
+    def load_all_data(self, max_distance_to_farm_m: Optional[float] = None) -> Dict[str, object]:
         """
         Load all dashboard data using specialized loaders.
+        
+        Args:
+            max_distance_to_farm_m: Maximum distance to farm in meters (default: 10km)
         
         Returns:
             Dict containing all dashboard data:
             - polygons: List[Dict] - Field boundary polygons
             - farm_polygons: List[Dict] - Farm boundary polygons with colors
-            - wells_df: pd.DataFrame - Well/groundwater data
+            - wells_df: pd.DataFrame - Well/groundwater data (filtered by distance)
             - farm_time_series: pd.DataFrame - Time series data for farms/regions
             - heat_points: List[List[float]] - Heatmap visualization points
             - cost_df: pd.DataFrame - Cost estimation data (mock)
@@ -70,9 +72,9 @@ class DashboardDataLoader:
             polygons = self.polygons_loader.load()
             farm_polygons = self.farms_loader.load()
             
-            # Phase 2: Load wells data (most critical for derived data)
-            logger.info("🏔️  Phase 2: Loading wells data...")
-            wells_df = self.wells_loader.load()
+            # Phase 2: Load wells data (most critical for derived data) with distance filtering
+            logger.info("🏔️  Phase 2: Loading wells data with distance filtering...")
+            wells_df = self.wells_loader.load(max_distance_to_farm_m)
             
             # Phase 3: Generate derived data based on wells
             logger.info("📊 Phase 3: Generating derived datasets...")
@@ -92,7 +94,7 @@ class DashboardDataLoader:
                 "polygons": polygons,
                 "farm_polygons": farm_polygons,
                 "wells_df": wells_df,
-                "farm_time_series": farm_time_series,  # Changed from water_levels
+                "farm_time_series": farm_time_series,
                 "heat_points": heat_points,
                 "cost_df": cost_df,
                 "prob_df": prob_df,
@@ -108,7 +110,7 @@ class DashboardDataLoader:
         except Exception as e:
             logger.error(f"❌ Critical error during data loading: {e}")
             logger.warning("🔄 Falling back to complete mock dataset...")
-            return self._load_complete_fallback_data()
+            return self._load_complete_fallback_data(max_distance_to_farm_m)
     
     def _generate_farm_time_series(self, wells_df) -> object:
         """
@@ -143,6 +145,9 @@ class DashboardDataLoader:
                 base_survival_rate = region_wells["survived"].mean()
                 total_wells_in_region = len(region_wells)
                 
+                # Calculate average distance to farm for this region
+                avg_distance_to_farm = region_wells["distance_to_farm"].mean() if "distance_to_farm" in region_wells.columns else 5000
+                
                 for month in months:
                     # Add seasonal variation
                     month_num = month.month
@@ -154,9 +159,16 @@ class DashboardDataLoader:
                     else:
                         seasonal_factor = rng.uniform(0.85, 1.0)
                     
+                    # Distance factor: closer to farms = slightly better performance
+                    distance_factor = 1.0
+                    if avg_distance_to_farm < 2000:  # < 2km
+                        distance_factor = 1.05
+                    elif avg_distance_to_farm > 10000:  # > 10km
+                        distance_factor = 0.95
+                    
                     # Add noise
                     noise = rng.normal(0, 0.03)
-                    survival_rate = np.clip(base_survival_rate * seasonal_factor + noise, 0.0, 1.0)
+                    survival_rate = np.clip(base_survival_rate * seasonal_factor * distance_factor + noise, 0.0, 1.0)
                     
                     farm_time_series_data.append({
                         "date": month,
@@ -165,7 +177,8 @@ class DashboardDataLoader:
                         "total_wells": total_wells_in_region,
                         "successful_wells": int(total_wells_in_region * survival_rate),
                         "water_level_avg_m": rng.uniform(3.0, 8.0),
-                        "rainfall_mm": rng.uniform(0, 150) if 5 <= month_num <= 10 else rng.uniform(0, 50)
+                        "rainfall_mm": rng.uniform(0, 150) if 5 <= month_num <= 10 else rng.uniform(0, 50),
+                        "avg_distance_to_farm": avg_distance_to_farm
                     })
             
             farm_time_series = pd.DataFrame(farm_time_series_data)
@@ -178,20 +191,21 @@ class DashboardDataLoader:
             mock_data = generate_mock_data()
             return mock_data.get("farm_time_series", pd.DataFrame())
     
-    def load_specific_data(self, data_types: list) -> Dict[str, object]:
+    def load_specific_data(self, data_types: list, max_distance_to_farm_m: Optional[float] = None) -> Dict[str, object]:
         """
         Load only specific types of data.
         
         Args:
             data_types: List of data types to load 
                        ['wells', 'polygons', 'farms', 'farm_timeseries', 'heatmap']
+            max_distance_to_farm_m: Maximum distance to farm in meters
         """
         logger.info(f"🎯 Loading specific data types: {data_types}")
         
         data = {}
         
         if 'wells' in data_types:
-            data['wells_df'] = self.wells_loader.load()
+            data['wells_df'] = self.wells_loader.load(max_distance_to_farm_m)
         
         if 'polygons' in data_types:
             data['polygons'] = self.polygons_loader.load()
@@ -200,11 +214,11 @@ class DashboardDataLoader:
             data['farm_polygons'] = self.farms_loader.load()
         
         if 'farm_timeseries' in data_types:
-            wells_df = data.get('wells_df', self.wells_loader.load())
+            wells_df = data.get('wells_df', self.wells_loader.load(max_distance_to_farm_m))
             data['farm_time_series'] = self._generate_farm_time_series(wells_df)
         
         if 'heatmap' in data_types:
-            wells_df = data.get('wells_df', self.wells_loader.load())
+            wells_df = data.get('wells_df', self.wells_loader.load(max_distance_to_farm_m))
             data['heat_points'] = self.heatmap_loader.load(wells_df)
         
         logger.info(f"✅ Specific data loading complete: {list(data.keys())}")
@@ -226,7 +240,7 @@ class DashboardDataLoader:
         # Validate wells data
         wells_df = data.get("wells_df")
         if wells_df is not None and not wells_df.empty:
-            required_cols = ['well_id', 'lat', 'lon', 'depth_m', 'region', 'survived']
+            required_cols = ['well_id', 'lat', 'lon', 'depth_m', 'region', 'survived', 'distance_to_farm']
             missing_cols = [col for col in required_cols if col not in wells_df.columns]
             if missing_cols:
                 logger.warning(f"⚠️  Wells data missing columns: {missing_cols}")
@@ -268,6 +282,19 @@ class DashboardDataLoader:
             logger.info(f"   • Success rate: {success_rate:.1%}")
             logger.info(f"   • Depth range: {depth_range}")
             logger.info(f"   • Regions: {wells_df['region'].nunique()}")
+            
+            # Distance to farm summary
+            if 'distance_to_farm' in wells_df.columns:
+                min_dist = wells_df['distance_to_farm'].min()
+                max_dist = wells_df['distance_to_farm'].max()
+                avg_dist = wells_df['distance_to_farm'].mean()
+                logger.info(f"   • Distance to farm: {min_dist:.0f}m - {max_dist:.0f}m (avg: {avg_dist:.0f}m)")
+                
+                # Distance distribution
+                within_1km = (wells_df['distance_to_farm'] <= 1000).sum()
+                within_5km = (wells_df['distance_to_farm'] <= 5000).sum()
+                within_10km = (wells_df['distance_to_farm'] <= 10000).sum()
+                logger.info(f"   • Within 1km: {within_1km}, 5km: {within_5km}, 10km: {within_10km}")
         
         # Farm time series data summary
         farm_time_series = data.get("farm_time_series")
@@ -298,19 +325,31 @@ class DashboardDataLoader:
         
         logger.info("📋 === END SUMMARY ===")
     
-    def _load_complete_fallback_data(self) -> Dict[str, object]:
+    def _load_complete_fallback_data(self, max_distance_to_farm_m: Optional[float] = None) -> Dict[str, object]:
         """
         Load complete fallback dataset when all else fails.
         """
         logger.warning("🚨 Loading complete fallback dataset")
         mock_data = generate_mock_data()
         
+        # Apply distance filter to mock data if specified
+        wells_df = mock_data.get("wells_df")
+        if wells_df is not None and max_distance_to_farm_m is not None:
+            import numpy as np
+            # Add mock distance column if not present
+            if 'distance_to_farm' not in wells_df.columns:
+                rng = np.random.default_rng(42)
+                wells_df['distance_to_farm'] = rng.uniform(100, 15000, size=len(wells_df))
+            
+            # Apply filter
+            wells_df = wells_df[wells_df['distance_to_farm'] <= max_distance_to_farm_m]
+        
         # Ensure all required keys are present
         complete_data = {
             "polygons": mock_data.get("polygons", []),
             "farm_polygons": [],  # Empty farm polygons for fallback
-            "wells_df": mock_data.get("wells_df"),
-            "farm_time_series": mock_data.get("farm_time_series"),  # Changed from water_levels
+            "wells_df": wells_df,
+            "farm_time_series": mock_data.get("farm_time_series"),
             "heat_points": mock_data.get("heat_points", []),
             "cost_df": mock_data.get("cost_df"),
             "prob_df": mock_data.get("prob_df"),
@@ -318,29 +357,74 @@ class DashboardDataLoader:
         
         logger.warning("⚠️  Using complete mock dataset - check data file availability")
         return complete_data
+    
+    def get_distance_statistics(self, max_distance_to_farm_m: Optional[float] = None) -> Dict[str, object]:
+        """
+        Get statistics about distance filtering and wells distribution.
+        
+        Args:
+            max_distance_to_farm_m: Maximum distance filter to apply
+            
+        Returns:
+            Dictionary with distance statistics
+        """
+        try:
+            wells_df = self.wells_loader.load(max_distance_to_farm_m)
+            return self.wells_loader.get_distance_statistics(wells_df)
+        except Exception as e:
+            logger.error(f"❌ Error getting distance statistics: {e}")
+            return {}
+    
+    def get_data_source_info(self) -> Dict[str, Dict[str, str]]:
+        """
+        Get information about available data sources and their status.
+        
+        Returns:
+            Dictionary with data source information
+        """
+        source_info = {
+            "wells": {
+                "file": str(self.wells_loader.csv_file),
+                "status": "available" if self.wells_loader._file_exists(self.wells_loader.csv_file) else "missing",
+                "type": "CSV"
+            },
+            "polygons": {
+                "directory": str(self.polygons_loader.rdc_fields_dir),
+                "status": "available" if self.polygons_loader.rdc_fields_dir.exists() else "missing",
+                "type": "Geospatial"
+            },
+            "farms": {
+                "file": str(self.farms_loader.farms_shapefile),
+                "status": "available" if self.farms_loader._file_exists(self.farms_loader.farms_shapefile) else "missing",
+                "type": "Shapefile"
+            }
+        }
+        
+        return source_info
 
 
 # Main function that app.py should call (maintains backward compatibility)
-def load_dashboard_data(data_dir: Union[str, Path] = "geodash/data") -> Dict[str, object]:
+def load_dashboard_data(data_dir: Union[str, Path] = "geodash/data", max_distance_to_farm_m: Optional[float] = 10000) -> Dict[str, object]:
     """
     Main function to load all dashboard data.
     This is the primary interface for app.py and maintains backward compatibility.
     
     Args:
         data_dir: Directory containing data files
+        max_distance_to_farm_m: Maximum distance to farm in meters (default: 10km)
         
     Returns:
         Dictionary containing all dashboard data
     """
     loader = DashboardDataLoader(data_dir)
-    return loader.load_all_data()
+    return loader.load_all_data(max_distance_to_farm_m)
 
 
 # Additional convenience functions for specific use cases
-def load_wells_only(data_dir: Union[str, Path] = "geodash/data"):
+def load_wells_only(data_dir: Union[str, Path] = "geodash/data", max_distance_to_farm_m: Optional[float] = None):
     """Load only wells data (useful for testing)."""
     loader = DashboardDataLoader(data_dir)
-    return loader.load_specific_data(['wells'])
+    return loader.load_specific_data(['wells'], max_distance_to_farm_m)
 
 
 def load_farm_data(data_dir: Union[str, Path] = "geodash/data"):
@@ -355,11 +439,18 @@ def get_data_status(data_dir: Union[str, Path] = "geodash/data") -> Dict[str, Di
     return loader.get_data_source_info()
 
 
+def get_distance_statistics(data_dir: Union[str, Path] = "geodash/data", max_distance_to_farm_m: Optional[float] = None) -> Dict[str, object]:
+    """Get distance to farm statistics."""
+    loader = DashboardDataLoader(data_dir)
+    return loader.get_distance_statistics(max_distance_to_farm_m)
+
+
 # Export main interface and utilities
 __all__ = [
     "DashboardDataLoader",
     "load_dashboard_data",
-    "load_wells_only",
+    "load_wells_only", 
     "load_farm_data",
-    "get_data_status"
+    "get_data_status",
+    "get_distance_statistics"
 ]

@@ -1,17 +1,25 @@
-# app.py - Updated to use farm-based time series
+# app.py - Updated to use distance filter and new data structure
 from typing import Optional
 
 import pandas as pd
 import streamlit as st
 from streamlit_option_menu import option_menu
 
-from geodash.data import load_dashboard_data, filter_wells
+from geodash.data import load_dashboard_data
+from geodash.data.filters import (
+    sidebar_filters, 
+    filter_wells, 
+    get_filter_summary, 
+    display_distance_statistics,
+    get_filter_presets,
+    apply_filter_preset
+)
 from geodash.data.rain_service import get_rain_service
 from geodash.ui import (
     build_map_with_controls,
-    chart_farm_survival_analytics,  # Updated function name
-    chart_region_comparison,        # New function
-    chart_seasonal_analysis,        # New function
+    chart_farm_survival_analytics,
+    chart_region_comparison,
+    chart_seasonal_analysis,
     chart_survival_rate,
     chart_probability_by_depth,
     chart_cost_estimation,
@@ -83,24 +91,42 @@ def main() -> None:
                 "Main",
                 "Water Survival Analysis", 
                 "Underground Water Discovery",
-                "AI Assistant"
+                "AI Assistant",
+                "Distance Analysis"  # NEW: Distance analysis page
             ],
-            icons=['house', 'droplet', 'search', 'robot'],
+            icons=['house', 'droplet', 'search', 'robot', 'rulers'],
             menu_icon="globe",
             default_index=0,
         )
         
         st.markdown("---")
         
-        # Load data
-        data = load_dashboard_data()
+        # NEW: Filter presets section
+        if selected in ["Main", "Water Survival Analysis", "Underground Water Discovery"]:
+            st.sidebar.subheader("🎛️ Quick Filters")
+            presets = get_filter_presets()
+            preset_options = ["Custom"] + list(presets.keys())
+            selected_preset = st.sidebar.selectbox("Filter Preset", preset_options)
+            
+            if selected_preset != "Custom":
+                st.sidebar.info(f"Applied preset: **{selected_preset}**")
+        else:
+            selected_preset = "Custom"
         
-        # SIMPLIFIED SIDEBAR - Remove map layer controls since they're now in the map
-        st.sidebar.header("Data Filters")
-        search_q = st.sidebar.text_input("Search Well/Polygon ID")
-        region = st.sidebar.selectbox("Region", options=["All"] + sorted(data["wells_df"]["region"].unique().tolist()))
-        min_depth, max_depth = int(data["wells_df"]["depth_m"].min()), int(data["wells_df"]["depth_m"].max())
-        depth_range = st.sidebar.slider("Depth range (m)", min_value=min_depth, max_value=max_depth, value=(min_depth, max_depth), step=5)
+        # Load initial data to get basic structure for filters
+        initial_data = load_dashboard_data()
+        
+        # Apply filter preset or use custom filters
+        if selected_preset == "Custom":
+            filters = sidebar_filters(initial_data["wells_df"])
+        else:
+            filters = apply_filter_preset(initial_data["wells_df"], selected_preset)
+            # Still show the filter controls but with preset values
+            filters.update(sidebar_filters(initial_data["wells_df"]))
+        
+        # Load data with distance filter applied
+        max_distance = filters.get("distance_range", 10000)
+        data = load_dashboard_data(max_distance_to_farm_m=max_distance)
         
         # NEW: Farm/Region selection for time series analysis
         if selected == "Water Survival Analysis":
@@ -112,12 +138,12 @@ def main() -> None:
         else:
             selected_farm_region = None
         
-        # Create filters dict
-        filters = {
-            "search_q": search_q, 
-            "region": region, 
-            "depth_range": depth_range,
-        }
+        st.markdown("---")
+        
+        # Display filter summary
+        filtered_wells = filter_wells(data["wells_df"], filters)
+        filter_summary = get_filter_summary(data["wells_df"], filtered_wells, filters)
+        st.sidebar.markdown(filter_summary)
         
         st.markdown("---")
         st.markdown(
@@ -127,7 +153,7 @@ def main() -> None:
                 📊 Interactive Well Analysis<br>
                 💧 Water Resource Management<br>
                 🚜 Farm-based Time Series<br>
-                🎛️ Map controls moved to map area<br>
+                🏚️ Distance-based Filtering<br>
                 🗓️ 2025<br>
             </div>
             """,
@@ -158,6 +184,8 @@ def main() -> None:
             default_layers = {"show_polygons": False, "show_farms": True, "show_wells": True, "show_heatmap": False}
         elif selected == "Underground Water Discovery":
             default_layers = {"show_polygons": True, "show_farms": True, "show_wells": True, "show_heatmap": True}
+        elif selected == "Distance Analysis":
+            default_layers = {"show_polygons": False, "show_farms": True, "show_wells": True, "show_heatmap": False}
         elif selected == "AI Assistant":
             default_layers = {"show_polygons": True, "show_farms": False, "show_wells": False, "show_heatmap": False}
         else:
@@ -255,6 +283,11 @@ def main() -> None:
             if data["farm_polygons"]:
                 st.metric("Total Farms", len(data["farm_polygons"]))
             
+            # NEW: Distance metrics
+            if 'distance_to_farm' in filtered_wells.columns and not filtered_wells.empty:
+                avg_distance = filtered_wells['distance_to_farm'].mean()
+                st.metric("Avg Distance to Farm", f"{avg_distance/1000:.1f}km")
+            
             st.markdown("**Metadata**")
             metadata_panel(selected_row)
             st.markdown("**Cost Estimation (by depth)**")
@@ -310,6 +343,86 @@ def main() -> None:
             💧 **Best Discovery Zones:**
             Look for bright red/orange heatmap areas with nearby successful wells.
             """)
+
+        elif selected == "Distance Analysis":
+            # NEW: Distance analysis page
+            st.markdown("**🏚️ Distance to Farm Analysis**")
+            
+            if 'distance_to_farm' in filtered_wells.columns and not filtered_wells.empty:
+                # Distance statistics
+                display_distance_statistics(filtered_wells)
+                
+                # Success rate by distance ranges
+                st.subheader("📊 Success Rate by Distance")
+                
+                # Create distance bins
+                filtered_wells_copy = filtered_wells.copy()
+                filtered_wells_copy['distance_bin'] = pd.cut(
+                    filtered_wells_copy['distance_to_farm'], 
+                    bins=[0, 1000, 2000, 5000, 10000, float('inf')],
+                    labels=['0-1km', '1-2km', '2-5km', '5-10km', '>10km']
+                )
+                
+                # Calculate success rate by distance bin
+                distance_success = (
+                    filtered_wells_copy.groupby('distance_bin')
+                    .agg({
+                        'survived': ['count', 'sum', 'mean']
+                    })
+                    .round(3)
+                )
+                
+                distance_success.columns = ['Total Wells', 'Successful Wells', 'Success Rate']
+                distance_success = distance_success.reset_index()
+                distance_success['Success Rate'] = distance_success['Success Rate'].apply(lambda x: f"{x:.1%}")
+                
+                st.dataframe(distance_success, use_container_width=True)
+                
+                # Distance vs depth analysis
+                st.subheader("🏔️ Distance vs Depth Analysis")
+                
+                import altair as alt
+                
+                scatter_chart = (
+                    alt.Chart(filtered_wells_copy)
+                    .mark_circle(size=60, opacity=0.7)
+                    .encode(
+                        x=alt.X('distance_to_farm:Q', title='Distance to Farm (m)'),
+                        y=alt.Y('depth_m:Q', title='Well Depth (m)'),
+                        color=alt.Color('survived:N', 
+                                      scale=alt.Scale(range=['#F44336', '#4CAF50']),
+                                      legend=alt.Legend(title="Well Status")),
+                        tooltip=['well_id:N', 'distance_to_farm:Q', 'depth_m:Q', 'survived:N', 'region:N']
+                    )
+                    .properties(height=400, title="Well Success by Distance and Depth")
+                )
+                
+                st.altair_chart(scatter_chart, use_container_width=True)
+                
+                # Regional distance analysis
+                st.subheader("🌍 Regional Distance Analysis")
+                
+                regional_distance = (
+                    filtered_wells_copy.groupby('region')
+                    .agg({
+                        'distance_to_farm': ['mean', 'min', 'max'],
+                        'survived': 'mean',
+                        'well_id': 'count'
+                    })
+                    .round(1)
+                )
+                
+                regional_distance.columns = ['Avg Distance (m)', 'Min Distance (m)', 'Max Distance (m)', 'Success Rate', 'Well Count']
+                regional_distance = regional_distance.reset_index()
+                regional_distance['Success Rate'] = regional_distance['Success Rate'].apply(lambda x: f"{x:.1%}")
+                
+                st.dataframe(regional_distance, use_container_width=True)
+                
+            else:
+                st.info("Distance to farm data not available in current dataset")
+            
+            st.markdown("**Metadata**")
+            metadata_panel(selected_row)
 
         elif selected == "AI Assistant":
             st.markdown("**Assistant**")
