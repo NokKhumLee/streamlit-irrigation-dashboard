@@ -9,4 +9,6 @@ __pycache__/
 # sqlite
 .cache.sqlite
 
+.DS_Store
+
 /env
