@@ -1,6 +1,9 @@
+# geodash/data/mockup.py - Updated to generate farm-based time series
+
 """
 Mockup/fallback data generator for the geological dashboard.
 This module provides mock data when real data is not available.
+Updated to generate time series data for farms instead of individual wells.
 """
 from typing import Dict, List
 
@@ -16,7 +19,7 @@ def generate_mock_data() -> Dict[str, object]:
     Returns a dict with:
     - polygons: List[dict] - Mock field polygons
     - wells_df: pd.DataFrame - Mock well data  
-    - water_levels: pd.DataFrame - Mock time series data
+    - farm_time_series: pd.DataFrame - Mock time series data for farms (not wells)
     - heat_points: List[List[float]] - Mock heatmap points
     - cost_df: pd.DataFrame - Mock cost estimation data
     - prob_df: pd.DataFrame - Mock probability data
@@ -93,43 +96,68 @@ def generate_mock_data() -> Dict[str, object]:
         }
     )
 
-    # Mock time series data
-    months = pd.date_range(end=pd.Timestamp.today().normalize(), periods=12, freq="MS")
-    water_levels = (
-        pd.DataFrame(
-            rng.normal(loc=5, scale=1.2, size=(len(months), len(well_ids))),
-            index=months,
-            columns=well_ids,
-        )
-        .clip(lower=2.0)
-    )
-    water_levels = water_levels.stack().reset_index()
-    water_levels.columns = ["date", "well_id", "water_level_m"]
+    # NEW: Farm-based time series data instead of well-based
+    # Generate time series for each region (representing farm areas)
+    months = pd.date_range(end=pd.Timestamp.today().normalize(), periods=24, freq="MS")  # 2 years of data
+    
+    # Get unique regions to create farm time series
+    unique_regions = regions
+    farm_time_series_data = []
+    
+    for region in np.unique(unique_regions):
+        # Generate realistic seasonal patterns for each farm/region
+        base_survival_rate = rng.uniform(0.6, 0.9)  # Base survival rate for this region
+        
+        for month in months:
+            # Add seasonal variation (higher in rainy season, lower in dry season)
+            month_num = month.month
+            seasonal_factor = 1.0
+            
+            # Thailand rainy season (May-October) - higher survival rates
+            if 5 <= month_num <= 10:
+                seasonal_factor = rng.uniform(1.1, 1.3)
+            # Dry season (November-April) - lower survival rates  
+            else:
+                seasonal_factor = rng.uniform(0.8, 1.0)
+            
+            # Add some random noise
+            noise = rng.normal(0, 0.05)
+            
+            survival_rate = np.clip(base_survival_rate * seasonal_factor + noise, 0.0, 1.0)
+            
+            # Calculate number of wells in this region for this time period
+            wells_in_region = np.sum(regions == region)
+            
+            farm_time_series_data.append({
+                "date": month,
+                "region": region,
+                "survival_rate": survival_rate,
+                "total_wells": wells_in_region,
+                "successful_wells": int(wells_in_region * survival_rate),
+                "water_level_avg_m": rng.uniform(3.0, 8.0),  # Average water level for the region
+                "rainfall_mm": rng.uniform(0, 150) if 5 <= month_num <= 10 else rng.uniform(0, 50)
+            })
+    
+    farm_time_series = pd.DataFrame(farm_time_series_data)
 
     # Mock heatmap points - ALIGNED with Dan Chang district area (same boundaries as wells)
     heat_points = []
     for _ in range(300):
-        # Use the SAME boundary variables as wells to ensure perfect alignment
         lat = dan_chang_lat_min + rng.random() * (dan_chang_lat_max - dan_chang_lat_min)
         lon = dan_chang_lng_min + rng.random() * (dan_chang_lng_max - dan_chang_lng_min)
         weight = float(rng.uniform(0.2, 1.0))
         heat_points.append([lat, lon, weight])
 
-    # BONUS: Add some heatmap points clustered around actual wells for more realistic visualization
-    # This creates correlation between well locations and probability heatmap
+    # Add heatmap points clustered around actual wells for more realistic visualization
     for _, well in wells_df.iterrows():
-        # Add 2-4 heatmap points near each well with slight randomness
         num_nearby_points = rng.integers(2, 5)
         for _ in range(num_nearby_points):
-            # Small offset around each well (within ~1km radius)
-            lat_offset = rng.normal(0, 0.005)  # ~0.5km standard deviation
+            lat_offset = rng.normal(0, 0.005)
             lon_offset = rng.normal(0, 0.005)
             
-            # Ensure points stay within district boundaries
             nearby_lat = np.clip(well['lat'] + lat_offset, dan_chang_lat_min, dan_chang_lat_max)
             nearby_lon = np.clip(well['lon'] + lon_offset, dan_chang_lng_min, dan_chang_lng_max)
             
-            # Higher weight for areas near successful wells
             base_weight = 0.8 if well['survived'] else 0.4
             weight = float(np.clip(rng.normal(base_weight, 0.2), 0.1, 1.0))
             
@@ -160,7 +188,7 @@ def generate_mock_data() -> Dict[str, object]:
     return {
         "polygons": polygons,
         "wells_df": wells_df,
-        "water_levels": water_levels,
+        "farm_time_series": farm_time_series,  # NEW: Farm-based time series instead of water_levels
         "heat_points": heat_points,
         "cost_df": cost_df,
         "prob_df": prob_df,

@@ -1,7 +1,8 @@
+# geodash/data/loader.py - Updated for farm-based time series
+
 """
 Main data loader hub for the geological dashboard.
-Coordinates specialized loaders and provides the main interface for app.py.
-This replaces the previous monolithic loader with a clean, modular approach.
+Updated to handle farm-based time series instead of well-based time series.
 """
 from pathlib import Path
 from typing import Dict, Union
@@ -11,7 +12,7 @@ from .data_loaders import (
     WellsLoader,
     PolygonsLoader, 
     FarmsLoader,
-    TimeSeriesLoader,
+    # TimeSeriesLoader,  # Not needed for farm-based approach
     HeatmapLoader
 )
 from .mockup import generate_mock_data
@@ -25,7 +26,7 @@ logger = logging.getLogger("DataLoader")
 class DashboardDataLoader:
     """
     Main coordinator for all dashboard data loading.
-    Acts as a hub that delegates to specialized loaders.
+    Updated to handle farm-based time series data.
     """
     
     def __init__(self, data_dir: Union[str, Path] = "geodash/data"):
@@ -42,7 +43,7 @@ class DashboardDataLoader:
         self.wells_loader = WellsLoader(data_dir)
         self.polygons_loader = PolygonsLoader(data_dir)
         self.farms_loader = FarmsLoader(data_dir)
-        self.timeseries_loader = TimeSeriesLoader(data_dir)
+        # Remove timeseries_loader since we're generating farm-based data directly
         self.heatmap_loader = HeatmapLoader(data_dir)
         
         logger.info("✅ All specialized loaders initialized")
@@ -56,7 +57,7 @@ class DashboardDataLoader:
             - polygons: List[Dict] - Field boundary polygons
             - farm_polygons: List[Dict] - Farm boundary polygons with colors
             - wells_df: pd.DataFrame - Well/groundwater data
-            - water_levels: pd.DataFrame - Time series water level data
+            - farm_time_series: pd.DataFrame - Time series data for farms/regions
             - heat_points: List[List[float]] - Heatmap visualization points
             - cost_df: pd.DataFrame - Cost estimation data (mock)
             - prob_df: pd.DataFrame - Success probability data (mock)
@@ -75,11 +76,13 @@ class DashboardDataLoader:
             
             # Phase 3: Generate derived data based on wells
             logger.info("📊 Phase 3: Generating derived datasets...")
-            water_levels = self.timeseries_loader.load(wells_df)
             heat_points = self.heatmap_loader.load(wells_df)
             
-            # Phase 4: Load additional datasets (currently mock data)
-            logger.info("💰 Phase 4: Loading cost and probability data...")
+            # Phase 4: Generate farm-based time series and additional datasets
+            logger.info("🚜 Phase 4: Generating farm time series and additional data...")
+            farm_time_series = self._generate_farm_time_series(wells_df)
+            
+            # Load mock cost and probability data
             mock_data = generate_mock_data()
             cost_df = mock_data["cost_df"]
             prob_df = mock_data["prob_df"]
@@ -89,7 +92,7 @@ class DashboardDataLoader:
                 "polygons": polygons,
                 "farm_polygons": farm_polygons,
                 "wells_df": wells_df,
-                "water_levels": water_levels,
+                "farm_time_series": farm_time_series,  # Changed from water_levels
                 "heat_points": heat_points,
                 "cost_df": cost_df,
                 "prob_df": prob_df,
@@ -107,16 +110,81 @@ class DashboardDataLoader:
             logger.warning("🔄 Falling back to complete mock dataset...")
             return self._load_complete_fallback_data()
     
+    def _generate_farm_time_series(self, wells_df) -> object:
+        """
+        Generate farm-based time series data from wells data.
+        
+        Args:
+            wells_df: DataFrame containing well data
+            
+        Returns:
+            DataFrame with farm/region time series data
+        """
+        try:
+            import pandas as pd
+            import numpy as np
+            
+            if wells_df.empty:
+                logger.warning("⚠️  No wells data available for farm time series generation")
+                return pd.DataFrame()
+            
+            rng = np.random.default_rng(42)
+            
+            # Generate 24 months of data (2 years)
+            months = pd.date_range(end=pd.Timestamp.today().normalize(), periods=24, freq="MS")
+            
+            # Get unique regions from wells data
+            unique_regions = wells_df["region"].unique()
+            farm_time_series_data = []
+            
+            for region in unique_regions:
+                # Get wells in this region
+                region_wells = wells_df[wells_df["region"] == region]
+                base_survival_rate = region_wells["survived"].mean()
+                total_wells_in_region = len(region_wells)
+                
+                for month in months:
+                    # Add seasonal variation
+                    month_num = month.month
+                    seasonal_factor = 1.0
+                    
+                    # Thailand rainy season (May-October) - higher survival rates
+                    if 5 <= month_num <= 10:
+                        seasonal_factor = rng.uniform(1.05, 1.2)
+                    else:
+                        seasonal_factor = rng.uniform(0.85, 1.0)
+                    
+                    # Add noise
+                    noise = rng.normal(0, 0.03)
+                    survival_rate = np.clip(base_survival_rate * seasonal_factor + noise, 0.0, 1.0)
+                    
+                    farm_time_series_data.append({
+                        "date": month,
+                        "region": region,
+                        "survival_rate": survival_rate,
+                        "total_wells": total_wells_in_region,
+                        "successful_wells": int(total_wells_in_region * survival_rate),
+                        "water_level_avg_m": rng.uniform(3.0, 8.0),
+                        "rainfall_mm": rng.uniform(0, 150) if 5 <= month_num <= 10 else rng.uniform(0, 50)
+                    })
+            
+            farm_time_series = pd.DataFrame(farm_time_series_data)
+            logger.info(f"✅ Generated farm time series for {len(unique_regions)} regions over {len(months)} months")
+            return farm_time_series
+            
+        except Exception as e:
+            logger.error(f"❌ Error generating farm time series: {e}")
+            # Fallback to mock data
+            mock_data = generate_mock_data()
+            return mock_data.get("farm_time_series", pd.DataFrame())
+    
     def load_specific_data(self, data_types: list) -> Dict[str, object]:
         """
-        Load only specific types of data (useful for testing or partial loading).
+        Load only specific types of data.
         
         Args:
             data_types: List of data types to load 
-                       ['wells', 'polygons', 'farms', 'timeseries', 'heatmap']
-            
-        Returns:
-            Dictionary containing only the requested data types
+                       ['wells', 'polygons', 'farms', 'farm_timeseries', 'heatmap']
         """
         logger.info(f"🎯 Loading specific data types: {data_types}")
         
@@ -131,9 +199,9 @@ class DashboardDataLoader:
         if 'farms' in data_types:
             data['farm_polygons'] = self.farms_loader.load()
         
-        if 'timeseries' in data_types:
+        if 'farm_timeseries' in data_types:
             wells_df = data.get('wells_df', self.wells_loader.load())
-            data['water_levels'] = self.timeseries_loader.load(wells_df)
+            data['farm_time_series'] = self._generate_farm_time_series(wells_df)
         
         if 'heatmap' in data_types:
             wells_df = data.get('wells_df', self.wells_loader.load())
@@ -142,70 +210,14 @@ class DashboardDataLoader:
         logger.info(f"✅ Specific data loading complete: {list(data.keys())}")
         return data
     
-    def reload_data(self, force_refresh: bool = False) -> Dict[str, object]:
-        """
-        Reload all data, optionally forcing refresh of cached data.
-        
-        Args:
-            force_refresh: If True, bypass any caching mechanisms
-            
-        Returns:
-            Freshly loaded data dictionary
-        """
-        if force_refresh:
-            logger.info("🔄 Force refreshing all data loaders...")
-            # Re-initialize loaders to clear any internal caching
-            self.__init__(self.data_dir)
-        
-        return self.load_all_data()
-    
-    def get_data_source_info(self) -> Dict[str, Dict[str, str]]:
-        """
-        Get information about data sources and their status.
-        
-        Returns:
-            Dictionary with status info for each data source
-        """
-        info = {
-            "wells": {
-                "source_file": str(self.wells_loader.csv_file),
-                "exists": self.wells_loader._file_exists(self.wells_loader.csv_file),
-                "loader_class": "WellsLoader"
-            },
-            "field_polygons": {
-                "source_dir": str(self.polygons_loader.rdc_fields_dir),
-                "exists": self.polygons_loader.rdc_fields_dir.exists(),
-                "loader_class": "PolygonsLoader"
-            },
-            "farm_polygons": {
-                "source_file": str(self.farms_loader.farms_shapefile),
-                "exists": self.farms_loader._file_exists(self.farms_loader.farms_shapefile),
-                "loader_class": "FarmsLoader"
-            },
-            "time_series": {
-                "source": "Generated from wells data",
-                "exists": True,
-                "loader_class": "TimeSeriesLoader"
-            },
-            "heatmap": {
-                "source": "Generated from wells data",
-                "exists": True,
-                "loader_class": "HeatmapLoader"
-            }
-        }
-        return info
-    
     def _validate_data_integrity(self, data: Dict[str, object]) -> None:
         """
         Validate that loaded data has proper structure and relationships.
-        
-        Args:
-            data: Loaded data dictionary to validate
         """
         logger.info("🔍 Validating data integrity...")
         
         # Check that all expected keys exist
-        expected_keys = ["polygons", "farm_polygons", "wells_df", "water_levels", "heat_points", "cost_df", "prob_df"]
+        expected_keys = ["polygons", "farm_polygons", "wells_df", "farm_time_series", "heat_points", "cost_df", "prob_df"]
         missing_keys = [key for key in expected_keys if key not in data]
         
         if missing_keys:
@@ -221,24 +233,21 @@ class DashboardDataLoader:
             else:
                 logger.info("✅ Wells data structure validated")
         
-        # Validate time series consistency
-        water_levels = data.get("water_levels")
-        if wells_df is not None and water_levels is not None and not wells_df.empty and not water_levels.empty:
-            wells_in_ts = set(water_levels['well_id'].unique())
-            wells_in_main = set(wells_df['well_id'].unique())
-            if not wells_in_ts.issubset(wells_in_main):
-                logger.warning("⚠️  Time series contains wells not in main dataset")
+        # Validate farm time series consistency
+        farm_time_series = data.get("farm_time_series")
+        if wells_df is not None and farm_time_series is not None and not wells_df.empty and not farm_time_series.empty:
+            regions_in_ts = set(farm_time_series['region'].unique())
+            regions_in_wells = set(wells_df['region'].unique())
+            if not regions_in_ts.issubset(regions_in_wells):
+                logger.warning("⚠️  Farm time series contains regions not in wells dataset")
             else:
-                logger.info("✅ Time series data consistency validated")
+                logger.info("✅ Farm time series data consistency validated")
         
         logger.info("🔍 Data integrity validation complete")
     
     def _log_comprehensive_summary(self, data: Dict[str, object]) -> None:
         """
         Log detailed summary of all loaded data.
-        
-        Args:
-            data: Loaded data dictionary
         """
         logger.info("📋 === COMPREHENSIVE DATA LOADING SUMMARY ===")
         
@@ -260,14 +269,15 @@ class DashboardDataLoader:
             logger.info(f"   • Depth range: {depth_range}")
             logger.info(f"   • Regions: {wells_df['region'].nunique()}")
         
-        # Time series data summary
-        water_levels = data.get("water_levels")
-        if water_levels is not None and not water_levels.empty:
-            date_range = f"{water_levels['date'].min().strftime('%Y-%m')} to {water_levels['date'].max().strftime('%Y-%m')}"
-            logger.info(f"📊 Time Series Data:")
-            logger.info(f"   • Records: {len(water_levels):,}")
+        # Farm time series data summary
+        farm_time_series = data.get("farm_time_series")
+        if farm_time_series is not None and not farm_time_series.empty:
+            date_range = f"{farm_time_series['date'].min().strftime('%Y-%m')} to {farm_time_series['date'].max().strftime('%Y-%m')}"
+            logger.info(f"🚜 Farm Time Series Data:")
+            logger.info(f"   • Records: {len(farm_time_series):,}")
             logger.info(f"   • Date range: {date_range}")
-            logger.info(f"   • Wells covered: {water_levels['well_id'].nunique()}")
+            logger.info(f"   • Regions covered: {farm_time_series['region'].nunique()}")
+            logger.info(f"   • Avg survival rate: {farm_time_series['survival_rate'].mean():.1%}")
         
         # Heatmap data summary
         heat_points = data.get("heat_points", [])
@@ -291,9 +301,6 @@ class DashboardDataLoader:
     def _load_complete_fallback_data(self) -> Dict[str, object]:
         """
         Load complete fallback dataset when all else fails.
-        
-        Returns:
-            Complete mock dataset
         """
         logger.warning("🚨 Loading complete fallback dataset")
         mock_data = generate_mock_data()
@@ -303,7 +310,7 @@ class DashboardDataLoader:
             "polygons": mock_data.get("polygons", []),
             "farm_polygons": [],  # Empty farm polygons for fallback
             "wells_df": mock_data.get("wells_df"),
-            "water_levels": mock_data.get("water_levels"),
+            "farm_time_series": mock_data.get("farm_time_series"),  # Changed from water_levels
             "heat_points": mock_data.get("heat_points", []),
             "cost_df": mock_data.get("cost_df"),
             "prob_df": mock_data.get("prob_df"),
@@ -336,10 +343,10 @@ def load_wells_only(data_dir: Union[str, Path] = "geodash/data"):
     return loader.load_specific_data(['wells'])
 
 
-def load_geospatial_only(data_dir: Union[str, Path] = "geodash/data"):
-    """Load only geospatial data (polygons and farms)."""
+def load_farm_data(data_dir: Union[str, Path] = "geodash/data"):
+    """Load farm polygons and time series data."""
     loader = DashboardDataLoader(data_dir)
-    return loader.load_specific_data(['polygons', 'farms'])
+    return loader.load_specific_data(['farms', 'farm_timeseries'])
 
 
 def get_data_status(data_dir: Union[str, Path] = "geodash/data") -> Dict[str, Dict[str, str]]:
@@ -353,6 +360,6 @@ __all__ = [
     "DashboardDataLoader",
     "load_dashboard_data",
     "load_wells_only",
-    "load_geospatial_only", 
+    "load_farm_data",
     "get_data_status"
 ]

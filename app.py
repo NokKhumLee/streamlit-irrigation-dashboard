@@ -1,18 +1,17 @@
-# app.py - Updated to use in-map filter controls
+# app.py - Updated to use farm-based time series
 from typing import Optional
 
 import pandas as pd
 import streamlit as st
 from streamlit_option_menu import option_menu
 
-from geodash.data import load_dashboard_data, sidebar_filters, filter_wells
+from geodash.data import load_dashboard_data, filter_wells
 from geodash.data.rain_service import get_rain_service
 from geodash.ui import (
-    # Choose one of these approaches:
-    build_map_with_controls,     # Approach 1: Checkboxes above map
-    # build_map_with_floating_controls,  # Approach 2: Floating expander
-    # build_map_with_button_bar,  # Approach 3: Toggle buttons
-    chart_ground_water_analytics,
+    build_map_with_controls,
+    chart_farm_survival_analytics,  # Updated function name
+    chart_region_comparison,        # New function
+    chart_seasonal_analysis,        # New function
     chart_survival_rate,
     chart_probability_by_depth,
     chart_cost_estimation,
@@ -28,14 +27,6 @@ from geodash.plugins.examples import NotesPlugin
 def _point_in_polygon(lat: float, lon: float, polygon_coords: list) -> bool:
     """
     Check if a point is inside a polygon using ray casting algorithm.
-    
-    Args:
-        lat: Latitude of the point
-        lon: Longitude of the point
-        polygon_coords: List of [lat, lon] coordinate pairs forming the polygon
-        
-    Returns:
-        True if point is inside polygon, False otherwise
     """
     x, y = lon, lat
     n = len(polygon_coords)
@@ -59,12 +50,6 @@ def _point_in_polygon(lat: float, lon: float, polygon_coords: list) -> bool:
 def _get_polygon_center(polygon_coords: list) -> tuple:
     """
     Get the center point of a polygon.
-    
-    Args:
-        polygon_coords: List of [lat, lon] coordinate pairs forming the polygon
-        
-    Returns:
-        Tuple of (center_lat, center_lon)
     """
     if not polygon_coords:
         return 0.0, 0.0
@@ -110,13 +95,22 @@ def main() -> None:
         # Load data
         data = load_dashboard_data()
         
-        
         # SIMPLIFIED SIDEBAR - Remove map layer controls since they're now in the map
         st.sidebar.header("Data Filters")
         search_q = st.sidebar.text_input("Search Well/Polygon ID")
         region = st.sidebar.selectbox("Region", options=["All"] + sorted(data["wells_df"]["region"].unique().tolist()))
         min_depth, max_depth = int(data["wells_df"]["depth_m"].min()), int(data["wells_df"]["depth_m"].max())
         depth_range = st.sidebar.slider("Depth range (m)", min_value=min_depth, max_value=max_depth, value=(min_depth, max_depth), step=5)
+        
+        # NEW: Farm/Region selection for time series analysis
+        if selected == "Water Survival Analysis":
+            st.sidebar.header("Farm Analysis")
+            available_regions = ["All"] + sorted(data["farm_time_series"]["region"].unique().tolist()) if not data["farm_time_series"].empty else ["All"]
+            selected_farm_region = st.sidebar.selectbox("Select Farm/Region for Analysis", options=available_regions)
+            if selected_farm_region == "All":
+                selected_farm_region = None
+        else:
+            selected_farm_region = None
         
         # Create filters dict
         filters = {
@@ -132,6 +126,7 @@ def main() -> None:
                 <span>🌍 <em>Geological Dashboard</em></span><br>
                 📊 Interactive Well Analysis<br>
                 💧 Water Resource Management<br>
+                🚜 Farm-based Time Series<br>
                 🎛️ Map controls moved to map area<br>
                 🗓️ 2025<br>
             </div>
@@ -194,7 +189,6 @@ def main() -> None:
             last_click = map_state.get("last_object_clicked")
             farm_polygons = map_state.get("farm_polygons", [])
             
-            
             if isinstance(last_click, dict):
                 lat = last_click.get("lat")
                 lng = last_click.get("lng")
@@ -253,7 +247,7 @@ def main() -> None:
             active_layers = sum(layers.values())
             st.caption(f"🗺️ Map: {active_layers}/4 layers active")
 
-        # Per-page dashboards (unchanged)
+        # Per-page dashboards
         if selected == "Main":
             avg_depth = int(filtered_wells["depth_m"].mean()) if not filtered_wells.empty else 0
             st.metric("Average Depth", f"{avg_depth}m")
@@ -273,19 +267,29 @@ def main() -> None:
                 st.markdown("**🌧️ Rain Statistics (1 Year)**")
                 st.success("✅ Rain data loaded for selected farm location")
                 chart_rain_statistics(rain_data, rain_stats)
-                # chart_rain_frequency(rain_stats)
                 st.markdown("---")
             
-            st.markdown("**Ground Water Analytics**")
-            chart_ground_water_analytics(data["water_levels"], selected_well_id)
-            st.markdown("**Survival Rate**")
+            # NEW: Farm-based time series analysis
+            st.markdown("**🚜 Farm Survival Analytics**")
+            chart_farm_survival_analytics(data["farm_time_series"], selected_farm_region)
+            
+            # Show regional comparison if no specific region selected
+            if selected_farm_region is None:
+                st.markdown("**📊 Regional Comparison**")
+                chart_region_comparison(data["farm_time_series"])
+                
+                st.markdown("**🌿 Seasonal Analysis**")
+                chart_seasonal_analysis(data["farm_time_series"])
+            
+            st.markdown("**Overall Well Success Rate**")
             chart_survival_rate(filtered_wells)
+            
             st.markdown("**Metadata**")
             metadata_panel(selected_row)
             
-            # Instructions for rain data
+            # Instructions
             if selected_farm_coordinates is None:
-                st.info("💡 **Tip:** Click on a farm polygon in the map to view rain statistics for that location.")
+                st.info("💡 **Tips:**\n- Click on a farm polygon to view rain statistics\n- Select a specific region in the sidebar for detailed time series analysis")
 
         elif selected == "Underground Water Discovery":
             st.markdown("**Ground Water Discovery**")
