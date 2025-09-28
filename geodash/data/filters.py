@@ -19,10 +19,13 @@ def sidebar_filters(wells_df: pd.DataFrame) -> Dict[str, object]:
     
     if 'distance_to_farm' in wells_df.columns and not wells_df.empty:
         min_distance = int(wells_df["distance_to_farm"].min())
-        max_distance = int(wells_df["distance_to_farm"].max())
+        actual_max_distance = int(wells_df["distance_to_farm"].max())
         
-        # Default to 10km (10,000m) but don't exceed actual max distance
-        default_max_distance = min(10000, max_distance)
+        # Set maximum to 30km, regardless of actual data max
+        max_distance = 30000  # Always cap at 30km
+        
+        # Default to 10km (10,000m)
+        default_max_distance = 10000
         
         distance_range = st.sidebar.slider(
             "Max distance to farm (m)", 
@@ -30,24 +33,29 @@ def sidebar_filters(wells_df: pd.DataFrame) -> Dict[str, object]:
             max_value=max_distance, 
             value=default_max_distance, 
             step=500,
-            help="Filter wells by maximum distance to nearest farm (default: 10km)"
+            help="Filter wells by maximum distance to nearest farm (default: 10km, max: 30km)"
         )
         
         # Show distance in km for better readability
         st.sidebar.caption(f"Current filter: ≤ {distance_range/1000:.1f} km")
         
-        # Show how many wells are within common distances
+        # Show how many wells are within common distances (based on actual data)
         if not wells_df.empty:
             within_1km = (wells_df["distance_to_farm"] <= 1000).sum()
             within_5km = (wells_df["distance_to_farm"] <= 5000).sum()
             within_10km = (wells_df["distance_to_farm"] <= 10000).sum()
+            within_20km = (wells_df["distance_to_farm"] <= 20000).sum()
+            within_30km = (wells_df["distance_to_farm"] <= 30000).sum()
             
             st.sidebar.caption(f"""
             📊 **Wells by distance:**
             • Within 1km: {within_1km:,}
             • Within 5km: {within_5km:,} 
             • Within 10km: {within_10km:,}
-            • Total: {len(wells_df):,}
+            • Within 20km: {within_20km:,}
+            • Within 30km: {within_30km:,}
+            • Total available: {len(wells_df):,}
+            • Actual max: {actual_max_distance/1000:.1f}km
             """)
     else:
         distance_range = 10000  # Default 10km
@@ -198,7 +206,8 @@ def display_distance_statistics(wells_df: pd.DataFrame) -> None:
         ("1-5km", 1000, 5000), 
         ("5-10km", 5000, 10000),
         ("10-20km", 10000, 20000),
-        (">20km", 20000, float('inf'))
+        ("20-30km", 20000, 30000),
+        (">30km", 30000, float('inf'))
     ]
     
     range_data = []
@@ -233,7 +242,7 @@ def get_filter_presets() -> Dict[str, Dict[str, object]]:
             "region": "All",
             "search_q": "",
             "depth_range": None,  # Will be set to full range
-            "distance_range": 50000,  # 50km - essentially no distance filter
+            "distance_range": 30000,  # 30km - maximum range
         },
         "Near Farms Only": {
             "region": "All", 
@@ -252,6 +261,18 @@ def get_filter_presets() -> Dict[str, Dict[str, object]]:
             "search_q": "",
             "depth_range": None,
             "distance_range": 1000,  # 1km
+        },
+        "Medium Distance": {
+            "region": "All",
+            "search_q": "",
+            "depth_range": None,
+            "distance_range": 15000,  # 15km
+        },
+        "Far from Farms": {
+            "region": "All",
+            "search_q": "",
+            "depth_range": None,
+            "distance_range": 25000,  # 25km
         }
     }
 

@@ -355,12 +355,12 @@ def main() -> None:
                 # Success rate by distance ranges
                 st.subheader("📊 Success Rate by Distance")
                 
-                # Create distance bins
+                # Create distance bins for 30km range
                 filtered_wells_copy = filtered_wells.copy()
                 filtered_wells_copy['distance_bin'] = pd.cut(
                     filtered_wells_copy['distance_to_farm'], 
-                    bins=[0, 1000, 2000, 5000, 10000, float('inf')],
-                    labels=['0-1km', '1-2km', '2-5km', '5-10km', '>10km']
+                    bins=[0, 1000, 2000, 5000, 10000, 20000, 30000, float('inf')],
+                    labels=['0-1km', '1-2km', '2-5km', '5-10km', '10-20km', '20-30km', '>30km']
                 )
                 
                 # Calculate success rate by distance bin

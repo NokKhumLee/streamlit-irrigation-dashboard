@@ -334,15 +334,16 @@ class DashboardDataLoader:
         
         # Apply distance filter to mock data if specified
         wells_df = mock_data.get("wells_df")
-        if wells_df is not None and max_distance_to_farm_m is not None:
+        if wells_df is not None:
             import numpy as np
-            # Add mock distance column if not present
+            # Add mock distance column if not present (up to 30km range)
             if 'distance_to_farm' not in wells_df.columns:
                 rng = np.random.default_rng(42)
-                wells_df['distance_to_farm'] = rng.uniform(100, 15000, size=len(wells_df))
+                wells_df['distance_to_farm'] = rng.uniform(100, 30000, size=len(wells_df))
             
-            # Apply filter
-            wells_df = wells_df[wells_df['distance_to_farm'] <= max_distance_to_farm_m]
+            # Apply filter if specified
+            if max_distance_to_farm_m is not None:
+                wells_df = wells_df[wells_df['distance_to_farm'] <= max_distance_to_farm_m]
         
         # Ensure all required keys are present
         complete_data = {
