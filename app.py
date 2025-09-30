@@ -1,6 +1,6 @@
 """
 Badan (บาดาล) - Geological Dashboard
-Main application file (simplified orchestrator).
+Main application file with distance-to-farm filtering.
 """
 from typing import Optional
 import streamlit as st
@@ -77,15 +77,64 @@ def main() -> None:
         
         st.markdown("---")
         
-        # Load data
-        data = load_dashboard_data()
+        # Load data WITHOUT distance filter (load all wells, filter in UI)
+        if 'data' not in st.session_state:
+            st.session_state.data = load_dashboard_data(max_distance_to_farm_m=None)
+        
+        data = st.session_state.data
         
         # Sidebar filters
         st.sidebar.header("Data Filters")
+        
+        # Search filter
         search_q = st.sidebar.text_input("Search Well/Polygon ID")
-        region = st.sidebar.selectbox("Region", options=["All"] + sorted(data["wells_df"]["region"].unique().tolist()))
+        
+        # Region filter
+        region = st.sidebar.selectbox(
+            "Region", 
+            options=["All"] + sorted(data["wells_df"]["region"].unique().tolist())
+        )
+        
+        # Depth filter
         min_depth, max_depth = int(data["wells_df"]["depth_m"].min()), int(data["wells_df"]["depth_m"].max())
-        depth_range = st.sidebar.slider("Depth range (m)", min_value=min_depth, max_value=max_depth, value=(min_depth, max_depth), step=5)
+        depth_range = st.sidebar.slider(
+            "Depth range (m)", 
+            min_value=min_depth, 
+            max_value=max_depth, 
+            value=(min_depth, max_depth), 
+            step=5
+        )
+        
+        # NEW: Distance to Farm Filter
+        st.sidebar.subheader("🏚️ Distance to Farm")
+        
+        if 'distance_to_farm' in data["wells_df"].columns and not data["wells_df"].empty:
+            min_distance_m = int(data["wells_df"]["distance_to_farm"].min())
+            actual_max_distance_m = int(data["wells_df"]["distance_to_farm"].max())
+            
+            # Convert to kilometers for the slider
+            min_distance_km = min_distance_m / 1000
+            max_distance_km = 30.0  # 30km maximum
+            default_distance_km = 10.0  # 10km default
+            
+            distance_range_km = st.sidebar.slider(
+                "Max distance to farm (km)", 
+                min_value=min_distance_km, 
+                max_value=max_distance_km, 
+                value=default_distance_km, 
+                step=0.5,
+                help="Filter wells by maximum distance to nearest farm"
+            )
+            
+            # Convert back to meters for internal use
+            distance_range = int(distance_range_km * 1000)
+            
+            # Show wells matching current filter
+            wells_in_filter = (data["wells_df"]["distance_to_farm"] <= distance_range).sum()
+            st.sidebar.caption(f"📊 Wells within {distance_range_km:.1f}km: **{wells_in_filter:,}**")
+        else:
+            distance_range = 10000  # Default 10km in meters
+            st.sidebar.info("Distance data not available")
         
         # Farm selection for Water Survival page
         if selected == "Water Survival Analysis":
@@ -96,7 +145,13 @@ def main() -> None:
         else:
             selected_farm_region = None
         
-        filters = {"search_q": search_q, "region": region, "depth_range": depth_range}
+        # Build filters dictionary
+        filters = {
+            "search_q": search_q, 
+            "region": region, 
+            "depth_range": depth_range,
+            "distance_range": distance_range
+        }
         
         st.markdown("---")
         st.markdown("""
@@ -146,6 +201,13 @@ def main() -> None:
     # Dashboard content
     with col_dash:
         st.subheader("Dashboard")
+        
+        # Show filter summary
+        original_count = len(data["wells_df"])
+        filtered_count = len(filtered_wells)
+        if filtered_count < original_count:
+            removed = original_count - filtered_count
+            st.info(f"**Filtered:** {filtered_count:,} / {original_count:,} wells ({removed:,} removed)")
         
         # Well selection
         if selected != "AI Assistant":

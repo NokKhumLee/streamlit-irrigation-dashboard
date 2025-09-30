@@ -21,7 +21,6 @@ class WellsLoader:
         self.groundwater_dir = self.data_dir / "groundwater"
         # Updated CSV file path
         self.csv_file = self.groundwater_dir / "groundwater_completed.csv"
-        self.default_distance_filter_m = 10000  # 10km default filter
         self.logger = logging.getLogger(self.__class__.__name__)
     
     def load(self, max_distance_to_farm_m: Optional[float] = None) -> pd.DataFrame:
@@ -29,14 +28,11 @@ class WellsLoader:
         Load wells data from CSV file or fallback to mock data.
         
         Args:
-            max_distance_to_farm_m: Maximum distance to farm in meters (default: 10km)
+            max_distance_to_farm_m: Maximum distance to farm in meters (None = no filter, load all)
         
         Returns:
             DataFrame with columns: well_id, region, lat, lon, depth_m, survived, distance_to_farm
         """
-        if max_distance_to_farm_m is None:
-            max_distance_to_farm_m = self.default_distance_filter_m
-        
         # Try to load real data first
         if self._file_exists(self.csv_file):
             try:
@@ -45,11 +41,17 @@ class WellsLoader:
                 wells_df = self._process_groundwater_csv(df)
                 
                 if self._validate_wells_dataframe(wells_df):
-                    # Apply distance filter
-                    filtered_wells_df = self._apply_distance_filter(wells_df, max_distance_to_farm_m)
-                    self._log_data_summary("wells", len(filtered_wells_df), filtered_wells_df, "real")
-                    self._log_distance_filter_summary(wells_df, filtered_wells_df, max_distance_to_farm_m)
-                    return filtered_wells_df
+                    # Apply distance filter ONLY if specified
+                    if max_distance_to_farm_m is not None:
+                        filtered_wells_df = self._apply_distance_filter(wells_df, max_distance_to_farm_m)
+                        self._log_data_summary("wells", len(filtered_wells_df), filtered_wells_df, "real")
+                        self._log_distance_filter_summary(wells_df, filtered_wells_df, max_distance_to_farm_m)
+                        return filtered_wells_df
+                    else:
+                        # No filter - return all wells
+                        self._log_data_summary("wells", len(wells_df), wells_df, "real")
+                        self.logger.info("📍 Loaded ALL wells (no distance filter applied)")
+                        return wells_df
                 else:
                     self._log_fallback("wells data", "Invalid data structure after processing")
                     
@@ -81,22 +83,27 @@ class WellsLoader:
         emoji = "✅" if source == "real" else "🔄"
         self.logger.info(f"{emoji} Loaded {count} {data_type} items ({source} data)")
     
-    def _load_fallback_data(self, max_distance_to_farm_m: float) -> pd.DataFrame:
+    def _load_fallback_data(self, max_distance_to_farm_m: Optional[float]) -> pd.DataFrame:
         """Load mock wells data with distance_to_farm column."""
         from ..mockup import generate_mock_data
         
         mock_data = generate_mock_data()
         wells_df = mock_data["wells_df"]
         
-        # Add mock distance_to_farm column
-        rng = np.random.default_rng(42)
-        wells_df['distance_to_farm'] = rng.uniform(100, 15000, size=len(wells_df))  # 100m to 15km
+        # Add mock distance column if not present (up to 30km range)
+        if 'distance_to_farm' not in wells_df.columns:
+            rng = np.random.default_rng(42)
+            wells_df['distance_to_farm'] = rng.uniform(100, 30000, size=len(wells_df))
         
-        # Apply distance filter
-        filtered_wells_df = self._apply_distance_filter(wells_df, max_distance_to_farm_m)
-        self._log_data_summary("wells", len(filtered_wells_df), filtered_wells_df, "mock")
-        self._log_distance_filter_summary(wells_df, filtered_wells_df, max_distance_to_farm_m)
-        return filtered_wells_df
+        # Apply filter ONLY if specified
+        if max_distance_to_farm_m is not None:
+            wells_df = self._apply_distance_filter(wells_df, max_distance_to_farm_m)
+            self._log_distance_filter_summary(mock_data["wells_df"], wells_df, max_distance_to_farm_m)
+        else:
+            self.logger.info("📍 Loaded ALL mock wells (no distance filter)")
+        
+        self._log_data_summary("wells", len(wells_df), wells_df, "mock")
+        return wells_df
     
     def _process_groundwater_csv(self, df: pd.DataFrame) -> pd.DataFrame:
         """
