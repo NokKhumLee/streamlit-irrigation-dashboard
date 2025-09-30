@@ -1,41 +1,36 @@
-# app.py - Updated to use distance filter and new data structure
+"""
+Badan (บาดาล) - Geological Dashboard
+Main application file (simplified orchestrator).
+"""
 from typing import Optional
-
-import pandas as pd
 import streamlit as st
 from streamlit_option_menu import option_menu
 
-from geodash.data import load_dashboard_data
-from geodash.data.filters import (
-    sidebar_filters, 
-    filter_wells, 
-    get_filter_summary, 
-    display_distance_statistics,
-    get_filter_presets,
-    apply_filter_preset
-)
+from geodash.data import load_dashboard_data, filter_wells
 from geodash.data.rain_service import get_rain_service
-from geodash.ui import (
-    build_map_with_controls,
-    chart_farm_survival_analytics,
-    chart_region_comparison,
-    chart_seasonal_analysis,
-    chart_survival_rate,
-    chart_probability_by_depth,
-    chart_cost_estimation,
-    chart_rain_statistics,
-    chart_rain_frequency,
-    metadata_panel,
-    download_button,
+from geodash.ui import build_map_with_controls
+
+# Import page renderers
+from geodash.pages import (
+    render_main_dashboard,
+    render_water_survival,
+    render_discovery,
+    render_ai_assistant,
 )
-from geodash.plugins import PluginRegistry
-from geodash.plugins.examples import NotesPlugin
+
+
+def initialize_page_config() -> None:
+    """Configure Streamlit page settings."""
+    st.set_page_config(
+        page_title="Badan (บาดาล)",
+        page_icon="🌍",
+        layout="wide",
+        initial_sidebar_state="expanded",
+    )
 
 
 def _point_in_polygon(lat: float, lon: float, polygon_coords: list) -> bool:
-    """
-    Check if a point is inside a polygon using ray casting algorithm.
-    """
+    """Check if point is inside polygon (ray casting algorithm)."""
     x, y = lon, lat
     n = len(polygon_coords)
     inside = False
@@ -56,383 +51,160 @@ def _point_in_polygon(lat: float, lon: float, polygon_coords: list) -> bool:
 
 
 def _get_polygon_center(polygon_coords: list) -> tuple:
-    """
-    Get the center point of a polygon.
-    """
+    """Get center point of polygon."""
     if not polygon_coords:
         return 0.0, 0.0
     
     lats = [coord[0] for coord in polygon_coords]
     lons = [coord[1] for coord in polygon_coords]
     
-    center_lat = sum(lats) / len(lats)
-    center_lon = sum(lons) / len(lons)
-    
-    return center_lat, center_lon
-
-
-def initialize_page_config() -> None:
-    st.set_page_config(
-        page_title="Badan (บาดาล)",
-        page_icon="🌍",
-        layout="wide",
-        initial_sidebar_state="expanded",
-    )
+    return sum(lats) / len(lats), sum(lons) / len(lons)
 
 
 def main() -> None:
+    """Main application entry point."""
     initialize_page_config()
     
-    # Sidebar with option menu
+    # Sidebar navigation
     with st.sidebar:
         selected = option_menu(
             menu_title="Badan (บาดาล)",
-            options=[
-                "Main",
-                "Water Survival Analysis", 
-                "Underground Water Discovery",
-                "AI Assistant",
-                "Distance Analysis"  # NEW: Distance analysis page
-            ],
-            icons=['house', 'droplet', 'search', 'robot', 'rulers'],
+            options=["Main", "Water Survival Analysis", "Underground Water Discovery", "AI Assistant"],
+            icons=['house', 'droplet', 'search', 'robot'],
             menu_icon="globe",
             default_index=0,
         )
         
         st.markdown("---")
         
-        # NEW: Filter presets section
-        if selected in ["Main", "Water Survival Analysis", "Underground Water Discovery"]:
-            st.sidebar.subheader("🎛️ Quick Filters")
-            presets = get_filter_presets()
-            preset_options = ["Custom"] + list(presets.keys())
-            selected_preset = st.sidebar.selectbox("Filter Preset", preset_options)
-            
-            if selected_preset != "Custom":
-                st.sidebar.info(f"Applied preset: **{selected_preset}**")
-        else:
-            selected_preset = "Custom"
+        # Load data
+        data = load_dashboard_data()
         
-        # Load initial data to get basic structure for filters
-        initial_data = load_dashboard_data()
+        # Sidebar filters
+        st.sidebar.header("Data Filters")
+        search_q = st.sidebar.text_input("Search Well/Polygon ID")
+        region = st.sidebar.selectbox("Region", options=["All"] + sorted(data["wells_df"]["region"].unique().tolist()))
+        min_depth, max_depth = int(data["wells_df"]["depth_m"].min()), int(data["wells_df"]["depth_m"].max())
+        depth_range = st.sidebar.slider("Depth range (m)", min_value=min_depth, max_value=max_depth, value=(min_depth, max_depth), step=5)
         
-        # Apply filter preset or use custom filters
-        if selected_preset == "Custom":
-            filters = sidebar_filters(initial_data["wells_df"])
-        else:
-            filters = apply_filter_preset(initial_data["wells_df"], selected_preset)
-            # Still show the filter controls but with preset values
-            filters.update(sidebar_filters(initial_data["wells_df"]))
-        
-        # Load data with distance filter applied
-        max_distance = filters.get("distance_range", 10000)
-        data = load_dashboard_data(max_distance_to_farm_m=max_distance)
-        
-        # NEW: Farm/Region selection for time series analysis
+        # Farm selection for Water Survival page
         if selected == "Water Survival Analysis":
             st.sidebar.header("Farm Analysis")
             available_regions = ["All"] + sorted(data["farm_time_series"]["region"].unique().tolist()) if not data["farm_time_series"].empty else ["All"]
-            selected_farm_region = st.sidebar.selectbox("Select Farm/Region for Analysis", options=available_regions)
-            if selected_farm_region == "All":
-                selected_farm_region = None
+            selected_farm_region = st.sidebar.selectbox("Select Farm/Region", options=available_regions)
+            selected_farm_region = None if selected_farm_region == "All" else selected_farm_region
         else:
             selected_farm_region = None
         
-        st.markdown("---")
-        
-        # Display filter summary
-        filtered_wells = filter_wells(data["wells_df"], filters)
-        filter_summary = get_filter_summary(data["wells_df"], filtered_wells, filters)
-        st.sidebar.markdown(filter_summary)
+        filters = {"search_q": search_q, "region": region, "depth_range": depth_range}
         
         st.markdown("---")
-        st.markdown(
-            """
-            <div style="font-size: 0.8em; color: #6c757d; line-height: 1.5;">
-                <span>🌍 <em>Geological Dashboard</em></span><br>
-                📊 Interactive Well Analysis<br>
-                💧 Water Resource Management<br>
-                🚜 Farm-based Time Series<br>
-                🏚️ Distance-based Filtering<br>
-                🗓️ 2025<br>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
+        st.markdown("""
+        <div style="font-size: 0.8em; color: #6c757d;">
+            🌍 Geological Dashboard<br>
+            📊 Interactive Analysis<br>
+            💧 Water Management<br>
+            🗓️ 2025
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # Page title
     st.title(f"🔍 {selected}")
-
+    
+    # Layout: Map | Dashboard
     col_map, col_dash = st.columns([2, 1])
-
-    # Common filtered wells for all pages
+    
+    # Filter wells
     filtered_wells = filter_wells(data["wells_df"], filters)
-
-    # State passed between columns
+    
+    # State variables
     selected_well_id: Optional[str] = None
     selected_row = None
     map_state = None
     selected_farm_coordinates = None
     rain_data = None
     rain_stats = None
-
+    
+    # Build map
     with col_map:
-        # Build map with in-map controls
-        # Default layer settings based on current page
-        if selected == "Main":
-            default_layers = {"show_polygons": True, "show_farms": True, "show_wells": True, "show_heatmap": False}
-        elif selected == "Water Survival Analysis":
-            default_layers = {"show_polygons": False, "show_farms": True, "show_wells": True, "show_heatmap": False}
-        elif selected == "Underground Water Discovery":
-            default_layers = {"show_polygons": True, "show_farms": True, "show_wells": True, "show_heatmap": True}
-        elif selected == "Distance Analysis":
-            default_layers = {"show_polygons": False, "show_farms": True, "show_wells": True, "show_heatmap": False}
-        elif selected == "AI Assistant":
-            default_layers = {"show_polygons": True, "show_farms": False, "show_wells": False, "show_heatmap": False}
-        else:
-            default_layers = {"show_polygons": True, "show_farms": True, "show_wells": True, "show_heatmap": False}
+        # Default layer settings per page
+        default_layers = {
+            "Main": {"show_polygons": True, "show_farms": True, "show_wells": True, "show_heatmap": False},
+            "Water Survival Analysis": {"show_polygons": False, "show_farms": True, "show_wells": True, "show_heatmap": False},
+            "Underground Water Discovery": {"show_polygons": True, "show_farms": True, "show_wells": True, "show_heatmap": True},
+            "AI Assistant": {"show_polygons": True, "show_farms": False, "show_wells": False, "show_heatmap": False},
+        }
         
-        # Use the new map function with in-map controls
         map_state = build_map_with_controls(
             data["polygons"],
             data["farm_polygons"],
             filtered_wells,
             data["heat_points"],
-            current_filters=default_layers,
+            current_filters=default_layers.get(selected, {}),
         )
-
+    
+    # Dashboard content
     with col_dash:
         st.subheader("Dashboard")
-
-        # Selection via text input
+        
+        # Well selection
         if selected != "AI Assistant":
             manual_well_id = st.text_input("Well ID")
-            if manual_well_id:
-                if manual_well_id in data["wells_df"]["well_id"].values:
-                    selected_well_id = manual_well_id
-                else:
-                    st.warning("Well ID not found.")
-
-        # Handle map clicks for wells and farms
+            if manual_well_id and manual_well_id in data["wells_df"]["well_id"].values:
+                selected_well_id = manual_well_id
+        
+        # Handle map clicks
         if isinstance(map_state, dict):
             last_click = map_state.get("last_object_clicked")
             farm_polygons = map_state.get("farm_polygons", [])
             
             if isinstance(last_click, dict):
-                lat = last_click.get("lat")
-                lng = last_click.get("lng")
+                lat, lng = last_click.get("lat"), last_click.get("lng")
                 
-                if lat is not None and lng is not None:
-                    # Check if click is on a farm polygon
-                    clicked_farm = None
+                if lat and lng:
+                    # Check farm click
                     for farm in farm_polygons:
-                        # Try point-in-polygon first
                         if _point_in_polygon(float(lat), float(lng), farm["coordinates"]):
-                            clicked_farm = farm
-                            break
-                        
-                        # Fallback: check if click is close to farm center (within 0.01 degrees ≈ 1km)
-                        center_lat, center_lon = _get_polygon_center(farm["coordinates"])
-                        distance = ((float(lat) - center_lat) ** 2 + (float(lng) - center_lon) ** 2) ** 0.5
-                        
-                        if distance < 0.01:  # Within ~1km
-                            clicked_farm = farm
-                            break
-                    
-                    if clicked_farm:
-                        # Farm clicked - get rain data
-                        selected_farm_coordinates = clicked_farm["coordinates"]
-                        rain_service = get_rain_service()
-                        
-                        if rain_service.client is not None:
-                            center_lat, center_lon = rain_service.get_farm_center_coordinates(selected_farm_coordinates)
+                            selected_farm_coordinates = farm["coordinates"]
+                            rain_service = get_rain_service()
                             
-                            with st.spinner("Fetching rain data..."):
-                                rain_data = rain_service.get_rain_data(center_lat, center_lon, days_back=365)
-                                if rain_data is not None:
-                                    rain_stats = rain_service.get_rain_statistics(rain_data)
-                        else:
-                            st.warning("Rain data service is not available. Please install required packages: openmeteo-requests, requests-cache, retry-requests")
+                            if rain_service.client:
+                                center_lat, center_lon = rain_service.get_farm_center_coordinates(selected_farm_coordinates)
+                                with st.spinner("Fetching rain data..."):
+                                    rain_data = rain_service.get_rain_data(center_lat, center_lon, days_back=365)
+                                    if rain_data is not None:
+                                        rain_stats = rain_service.get_rain_statistics(rain_data)
+                            break
                     
-                    # Check for nearest well if no farm clicked
-                    elif not data["wells_df"].empty:
+                    # Check well click
+                    if not selected_farm_coordinates and not data["wells_df"].empty:
                         df = data["wells_df"].copy()
-                        df["dist"] = (
-                            (df["lat"] - float(lat)) ** 2 + (df["lon"] - float(lng)) ** 2
-                        )
+                        df["dist"] = (df["lat"] - float(lat)) ** 2 + (df["lon"] - float(lng)) ** 2
                         nearest = df.nsmallest(1, "dist")
                         if not nearest.empty and nearest.iloc[0]["dist"] < 0.0005:
                             selected_well_id = str(nearest.iloc[0]["well_id"])
-
-        # Selected row
-        if selected_well_id is not None:
+        
+        # Get selected row
+        if selected_well_id:
             match = data["wells_df"][data["wells_df"]["well_id"] == selected_well_id]
             if not match.empty:
                 selected_row = match.iloc[0]
-
-        # Show current layer status (optional)
-        if isinstance(map_state, dict) and "layer_settings" in map_state:
-            layers = map_state["layer_settings"]
-            active_layers = sum(layers.values())
-            st.caption(f"🗺️ Map: {active_layers}/4 layers active")
-
-        # Per-page dashboards
+        
+        # Render page-specific content
         if selected == "Main":
-            avg_depth = int(filtered_wells["depth_m"].mean()) if not filtered_wells.empty else 0
-            st.metric("Average Depth", f"{avg_depth}m")
-            
-            if data["farm_polygons"]:
-                st.metric("Total Farms", len(data["farm_polygons"]))
-            
-            # NEW: Distance metrics
-            if 'distance_to_farm' in filtered_wells.columns and not filtered_wells.empty:
-                avg_distance = filtered_wells['distance_to_farm'].mean()
-                st.metric("Avg Distance to Farm", f"{avg_distance/1000:.1f}km")
-            
-            st.markdown("**Metadata**")
-            metadata_panel(selected_row)
-            st.markdown("**Cost Estimation (by depth)**")
-            chart_cost_estimation(data["cost_df"])
-            download_button(filtered_wells)
-
+            render_main_dashboard(data, filtered_wells, map_state, selected_row)
+        
         elif selected == "Water Survival Analysis":
-            # Show rain data if farm is selected
-            if selected_farm_coordinates is not None and rain_data is not None:
-                st.markdown("**🌧️ Rain Statistics (1 Year)**")
-                st.success("✅ Rain data loaded for selected farm location")
-                chart_rain_statistics(rain_data, rain_stats)
-                st.markdown("---")
-            
-            # NEW: Farm-based time series analysis
-            st.markdown("**🚜 Farm Survival Analytics**")
-            chart_farm_survival_analytics(data["farm_time_series"], selected_farm_region)
-            
-            # Show regional comparison if no specific region selected
-            if selected_farm_region is None:
-                st.markdown("**📊 Regional Comparison**")
-                chart_region_comparison(data["farm_time_series"])
-                
-                st.markdown("**🌿 Seasonal Analysis**")
-                chart_seasonal_analysis(data["farm_time_series"])
-            
-            st.markdown("**Overall Well Success Rate**")
-            chart_survival_rate(filtered_wells)
-            
-            st.markdown("**Metadata**")
-            metadata_panel(selected_row)
-            
-            # Instructions
-            if selected_farm_coordinates is None:
-                st.info("💡 **Tips:**\n- Click on a farm polygon to view rain statistics\n- Select a specific region in the sidebar for detailed time series analysis")
-
+            render_water_survival(
+                data, filtered_wells, map_state, selected_row,
+                selected_farm_region, selected_farm_coordinates, rain_data, rain_stats
+            )
+        
         elif selected == "Underground Water Discovery":
-            st.markdown("**Ground Water Discovery**")
-            chart_probability_by_depth(data["prob_df"])
-            st.markdown("**Metadata**")
-            metadata_panel(selected_row)
-            st.markdown("**💡 Discovery Tips**")
-            st.info("""
-            🗺️ **Map Controls:** Use the checkboxes above the map to toggle layers
-            
-            **Map Legend:**
-            - 🟢 Green dots: Successful wells
-            - 🔴 Red dots: Failed wells  
-            - 🔥 Heatmap: Probability zones (red=high, blue=low)
-            - 🚜 Colored areas: Farm boundaries
-            - 📐 Blue areas: Field boundaries
-            
-            💧 **Best Discovery Zones:**
-            Look for bright red/orange heatmap areas with nearby successful wells.
-            """)
-
-        elif selected == "Distance Analysis":
-            # NEW: Distance analysis page
-            st.markdown("**🏚️ Distance to Farm Analysis**")
-            
-            if 'distance_to_farm' in filtered_wells.columns and not filtered_wells.empty:
-                # Distance statistics
-                display_distance_statistics(filtered_wells)
-                
-                # Success rate by distance ranges
-                st.subheader("📊 Success Rate by Distance")
-                
-                # Create distance bins for 30km range
-                filtered_wells_copy = filtered_wells.copy()
-                filtered_wells_copy['distance_bin'] = pd.cut(
-                    filtered_wells_copy['distance_to_farm'], 
-                    bins=[0, 1000, 2000, 5000, 10000, 20000, 30000, float('inf')],
-                    labels=['0-1km', '1-2km', '2-5km', '5-10km', '10-20km', '20-30km', '>30km']
-                )
-                
-                # Calculate success rate by distance bin
-                distance_success = (
-                    filtered_wells_copy.groupby('distance_bin')
-                    .agg({
-                        'survived': ['count', 'sum', 'mean']
-                    })
-                    .round(3)
-                )
-                
-                distance_success.columns = ['Total Wells', 'Successful Wells', 'Success Rate']
-                distance_success = distance_success.reset_index()
-                distance_success['Success Rate'] = distance_success['Success Rate'].apply(lambda x: f"{x:.1%}")
-                
-                st.dataframe(distance_success, use_container_width=True)
-                
-                # Distance vs depth analysis
-                st.subheader("🏔️ Distance vs Depth Analysis")
-                
-                import altair as alt
-                
-                scatter_chart = (
-                    alt.Chart(filtered_wells_copy)
-                    .mark_circle(size=60, opacity=0.7)
-                    .encode(
-                        x=alt.X('distance_to_farm:Q', title='Distance to Farm (m)'),
-                        y=alt.Y('depth_m:Q', title='Well Depth (m)'),
-                        color=alt.Color('survived:N', 
-                                      scale=alt.Scale(range=['#F44336', '#4CAF50']),
-                                      legend=alt.Legend(title="Well Status")),
-                        tooltip=['well_id:N', 'distance_to_farm:Q', 'depth_m:Q', 'survived:N', 'region:N']
-                    )
-                    .properties(height=400, title="Well Success by Distance and Depth")
-                )
-                
-                st.altair_chart(scatter_chart, use_container_width=True)
-                
-                # Regional distance analysis
-                st.subheader("🌍 Regional Distance Analysis")
-                
-                regional_distance = (
-                    filtered_wells_copy.groupby('region')
-                    .agg({
-                        'distance_to_farm': ['mean', 'min', 'max'],
-                        'survived': 'mean',
-                        'well_id': 'count'
-                    })
-                    .round(1)
-                )
-                
-                regional_distance.columns = ['Avg Distance (m)', 'Min Distance (m)', 'Max Distance (m)', 'Success Rate', 'Well Count']
-                regional_distance = regional_distance.reset_index()
-                regional_distance['Success Rate'] = regional_distance['Success Rate'].apply(lambda x: f"{x:.1%}")
-                
-                st.dataframe(regional_distance, use_container_width=True)
-                
-            else:
-                st.info("Distance to farm data not available in current dataset")
-            
-            st.markdown("**Metadata**")
-            metadata_panel(selected_row)
-
+            render_discovery(data, filtered_wells, map_state, selected_row)
+        
         elif selected == "AI Assistant":
-            st.markdown("**Assistant**")
-            user_msg = st.chat_input("Ask about geology or wells…")
-            if user_msg:
-                st.chat_message("user").write(user_msg)
-                st.chat_message("assistant").write("This is a placeholder response.")
-            registry = PluginRegistry()
-            registry.register(NotesPlugin())
-            registry.render_all()
+            render_ai_assistant(data)
 
 
 if __name__ == "__main__":

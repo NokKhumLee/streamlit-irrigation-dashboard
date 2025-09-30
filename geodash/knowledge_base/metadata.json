@@ -1,0 +1,26 @@
+{
+  "general_drilling_guidelines": {
+    "filename": "drilling_guidelines.md",
+    "category": "general",
+    "path": "geodash/knowledge_base/documents/drilling_guidelines.md",
+    "chunks": 3
+  },
+  "general_faq": {
+    "filename": "faq.md",
+    "category": "general",
+    "path": "geodash/knowledge_base/documents/faq.md",
+    "chunks": 4
+  },
+  "general_regional_geology": {
+    "filename": "regional_geology.md",
+    "category": "general",
+    "path": "geodash/knowledge_base/documents/regional_geology.md",
+    "chunks": 3
+  },
+  "general_groundwater_basics": {
+    "filename": "groundwater_basics.md",
+    "category": "general",
+    "path": "geodash/knowledge_base/documents/groundwater_basics.md",
+    "chunks": 2
+  }
+}
