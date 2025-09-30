@@ -69,7 +69,7 @@ class RainDataService:
             
         try:
             # Calculate date range
-            end_date = datetime.now()
+            end_date = datetime.now() - timedelta(days=1)
             start_date = end_date - timedelta(days=days_back)
             
             # Format dates for API
@@ -196,7 +196,7 @@ class RainDataService:
         except Exception as e:
             st.error(f"Error calculating farm center coordinates: {str(e)}")
             return 0.0, 0.0
-
+    
 
 # Global instance for caching
 _rain_service = None

@@ -389,3 +389,87 @@ def chart_seasonal_analysis(farm_time_series: pd.DataFrame) -> None:
             st.success("🌧️ Wells perform better during rainy season")
         else:
             st.info("☀️ Wells perform better during dry season")
+            
+def chart_water_requirements(water_req_df: pd.DataFrame, stats: Dict[str, float], farm_name: str) -> None:
+    """
+    Display water requirements charts for sugarcane farming.
+    
+    Args:
+        water_req_df: DataFrame with water requirements data
+        stats: Dictionary with water requirement statistics
+        farm_name: Name of the farm
+    """
+    if water_req_df is None or water_req_df.empty:
+        st.info("No water requirements data available for the selected farm.")
+        return
+    
+    st.subheader(f"💧 Water Requirements - {farm_name}")
+    
+    # Display key metrics
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("Total Water Need", f"{stats.get('total_water_requirement_cubic_m', 0):,.0f} m³")
+    with col2:
+        st.metric("Avg Monthly", f"{stats.get('avg_monthly_water_requirement_cubic_m', 0):,.0f} m³")
+    with col3:
+        st.metric("Max Monthly", f"{stats.get('max_monthly_water_requirement_cubic_m', 0):,.0f} m³")
+    with col4:
+        st.metric("Deficit Months", f"{stats.get('months_with_water_deficit', 0)}/12")
+    
+    # Monthly water requirements chart
+    if not water_req_df.empty:
+        # Create chart data with month abbreviations
+        chart_data = water_req_df.copy()
+        chart_data['month_abbr'] = chart_data['month_name'].str[:3]
+        
+        # Water requirements bar chart
+        water_chart = (
+            alt.Chart(chart_data)
+            .mark_bar(color='#2196F3')
+            .encode(
+                x=alt.X('month_abbr:O', title='Month', sort=['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                                                           'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']),
+                y=alt.Y('water_requirement_cubic_m:Q', title='Water Requirement (m³)')
+            )
+            .properties(height=300, title="Monthly Water Requirements")
+        )
+        
+        st.altair_chart(water_chart, use_container_width=True)
+        
+        # Water deficit vs crop need comparison
+        comparison_data = []
+        for _, row in water_req_df.iterrows():
+            comparison_data.extend([
+                {'month': row['month_abbr'], 'type': 'Crop Water Need', 'value': row['crop_water_need_mm']},
+                {'month': row['month_abbr'], 'type': 'Actual Rain', 'value': row['rain_mm']},
+                {'month': row['month_abbr'], 'type': 'Water Deficit', 'value': row['water_deficit_mm']}
+            ])
+        
+        comparison_df = pd.DataFrame(comparison_data)
+        
+        comparison_chart = (
+            alt.Chart(comparison_df)
+            .mark_bar()
+            .encode(
+                x=alt.X('month:O', title='Month', sort=['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                                                       'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']),
+                y=alt.Y('value:Q', title='Water (mm)'),
+                color=alt.Color('type:N', scale=alt.Scale(range=['#4CAF50', '#FF9800', '#F44336']))
+            )
+            .properties(height=300, title="Water Need vs Rainfall vs Deficit")
+        )
+        
+        st.altair_chart(comparison_chart, use_container_width=True)
+        
+        # Summary table
+        st.subheader("📋 Monthly Water Analysis")
+        display_df = water_req_df[['month_name', 'crop_water_need_mm', 'rain_mm', 
+                                  'water_deficit_mm', 'water_requirement_cubic_m']].copy()
+        display_df.columns = ['Month', 'Crop Need (mm)', 'Rain (mm)', 'Deficit (mm)', 'Water Need (m³)']
+        display_df['Water Need (m³)'] = display_df['Water Need (m³)'].round(0)
+        
+        st.dataframe(display_df, use_container_width=True)
+
+
+

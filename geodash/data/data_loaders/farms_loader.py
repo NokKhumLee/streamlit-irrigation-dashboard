@@ -1,6 +1,7 @@
 """
-Farm polygons data loader with color assignment.
-Handles loading farm boundary polygons from shapefiles with distinct colors.
+Farm polygons data loader with color assignment and area calculations.
+Handles loading farm boundary polygons from shapefiles with distinct colors and automatic area calculations.
+Provides area data in multiple units: square meters, hectares, and rai (Thai unit).
 """
 import pandas as pd
 from pathlib import Path
@@ -12,7 +13,7 @@ from ..mockup import generate_mock_data
 
 
 class FarmsLoader(BaseGeospatialLoader, DataValidationMixin):
-    """Loader for farm boundary polygons with color assignment."""
+    """Loader for farm boundary polygons with color assignment and automatic area calculations."""
     
     def __init__(self, data_dir: str = "geodash/data"):
         super().__init__(data_dir)
@@ -59,15 +60,18 @@ class FarmsLoader(BaseGeospatialLoader, DataValidationMixin):
     
     def _process_farm_polygons(self, gdf) -> List[Dict[str, object]]:
         """
-        Process farm polygons from GeoPandas DataFrame.
+        Process farm polygons from GeoPandas DataFrame with area calculations.
         
         Args:
             gdf: GeoPandas GeoDataFrame from shapefile
             
         Returns:
-            List of farm polygon dictionaries with styling
+            List of farm polygon dictionaries with styling and area data
         """
         farm_polygons = []
+        
+        # Calculate areas using projected coordinate system for accuracy
+        gdf_projected = gdf.to_crs('EPSG:3857')  # Web Mercator for area calculations
         
         for i, row in gdf.iterrows():
             try:
@@ -83,6 +87,11 @@ class FarmsLoader(BaseGeospatialLoader, DataValidationMixin):
                         # Find farm name
                         farm_name = self._find_farm_name(row, i)
                         
+                        # Calculate area in square meters and hectares
+                        area_sq_m = gdf_projected.iloc[i].geometry.area
+                        area_hectares = area_sq_m / 10000
+                        area_rai = area_hectares * 6.25  # 1 hectare = 6.25 rai (Thai unit)
+                        
                         # Assign color from palette
                         color = ColorManager.get_farm_color(i)
                         
@@ -93,7 +102,11 @@ class FarmsLoader(BaseGeospatialLoader, DataValidationMixin):
                             "color": color,
                             "fill_color": color,
                             "fill_opacity": 0.3,
-                            "weight": 2
+                            "weight": 2,
+                            # Area data
+                            "area_sq_m": round(area_sq_m, 2),
+                            "area_hectares": round(area_hectares, 2),
+                            "area_rai": round(area_rai, 2)
                         }
                         
                         farm_polygons.append(farm_polygon)
@@ -102,7 +115,7 @@ class FarmsLoader(BaseGeospatialLoader, DataValidationMixin):
                 self.logger.warning(f"⚠️  Error processing farm row {i}: {e}")
                 continue
         
-        self.logger.info(f"🚜 Successfully processed {len(farm_polygons)} farm polygons")
+        self.logger.info(f"🚜 Successfully processed {len(farm_polygons)} farm polygons with area data")
         return farm_polygons
     
     def _find_farm_name(self, row, index: int) -> str:
@@ -146,6 +159,48 @@ class FarmsLoader(BaseGeospatialLoader, DataValidationMixin):
             "fillColor": None,  # Will be set per farm
             "color": None,      # Will be set per farm
         }
+    
+    def get_farm_areas_summary(self, farm_polygons: List[Dict[str, object]]) -> Dict[str, object]:
+        """
+        Get summary statistics of farm areas.
+        
+        Args:
+            farm_polygons: List of farm polygon dictionaries with area data
+            
+        Returns:
+            Dictionary with area statistics
+        """
+        if not farm_polygons:
+            return {}
+        
+        areas_hectares = [farm.get('area_hectares', 0) for farm in farm_polygons]
+        areas_rai = [farm.get('area_rai', 0) for farm in farm_polygons]
+        
+        return {
+            "total_farms": len(farm_polygons),
+            "total_area_hectares": round(sum(areas_hectares), 2),
+            "total_area_rai": round(sum(areas_rai), 2),
+            "average_area_hectares": round(sum(areas_hectares) / len(areas_hectares), 2),
+            "average_area_rai": round(sum(areas_rai) / len(areas_rai), 2),
+            "largest_farm_hectares": round(max(areas_hectares), 2),
+            "smallest_farm_hectares": round(min(areas_hectares), 2)
+        }
+    
+    def get_farm_by_name(self, farm_polygons: List[Dict[str, object]], name: str) -> Dict[str, object]:
+        """
+        Get farm data by name including area information.
+        
+        Args:
+            farm_polygons: List of farm polygon dictionaries
+            name: Farm name to search for
+            
+        Returns:
+            Farm dictionary with area data or empty dict if not found
+        """
+        for farm in farm_polygons:
+            if farm.get('name', '').lower() == name.lower():
+                return farm
+        return {}
 
 
 # Export the loader class
