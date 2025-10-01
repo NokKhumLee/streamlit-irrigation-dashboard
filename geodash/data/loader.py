@@ -71,6 +71,10 @@ class DashboardDataLoader:
             logger.info("📍 Phase 1: Loading geospatial data...")
             polygons = self.polygons_loader.load()
             farm_polygons = self.farms_loader.load()
+            # Load field water CSV for enrichment
+            import pandas as pd
+            field_csv_path = self.data_dir / "field_water_data" / "field_data.csv"
+            field_data_df = pd.read_csv(field_csv_path)
             
             # Phase 2: Load wells data (most critical for derived data) with distance filtering
             logger.info("🏔️  Phase 2: Loading wells data with distance filtering...")
@@ -98,6 +102,7 @@ class DashboardDataLoader:
                 "heat_points": heat_points,
                 "cost_df": cost_df,
                 "prob_df": prob_df,
+                "field_data_df": field_data_df,
             }
             
             # Validate and log final results

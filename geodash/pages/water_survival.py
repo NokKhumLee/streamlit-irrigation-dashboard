@@ -41,12 +41,15 @@ def render_water_survival(
         rain_stats: Rain statistics if farm selected
     """
     
-    # Show rain data if farm is selected
-    if selected_farm_coordinates is not None and rain_data is not None:
-        st.markdown("**🌧️ Rain Statistics (1 Year)**")
-        st.success("✅ Rain data loaded for selected farm location")
+    # Show rain data if available
+    st.markdown("**🌧️ Rain Data Status**")
+    if rain_data is not None:
+        st.success(f"✅ Rain data loaded: {len(rain_data)} records")
         chart_rain_statistics(rain_data, rain_stats)
-        st.markdown("---")
+    else:
+        st.info("ℹ️ No rain data available - click anywhere on the map to get rain data for that location")
+    st.markdown("---")
+
     
     # Farm-based time series analysis
     st.markdown("**🚜 Farm Survival Analytics**")

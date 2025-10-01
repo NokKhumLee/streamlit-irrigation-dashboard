@@ -177,6 +177,7 @@ def main() -> None:
     selected_row = None
     map_state = None
     selected_farm_coordinates = None
+    selected_field_info = None
     rain_data = None
     rain_stats = None
     
@@ -196,6 +197,7 @@ def main() -> None:
             filtered_wells,
             data["heat_points"],
             current_filters=default_layers.get(selected, {}),
+            field_data_df=data.get("field_data_df"),
         )
     
     # Dashboard content
@@ -217,29 +219,50 @@ def main() -> None:
         
         # Handle map clicks
         if isinstance(map_state, dict):
-            last_click = map_state.get("last_object_clicked")
+            last_click = map_state.get("last_object_clicked") or map_state.get("last_clicked")
             farm_polygons = map_state.get("farm_polygons", [])
+            field_polygons = data.get("polygons", [])
+            field_data_df = data.get("field_data_df")
+            
+            # Debug: Show click detection status
+            if last_click:
+                st.info(f"🖱️ Map click detected: {last_click}")
+            else:
+                st.info("ℹ️ No map click detected")
+            
+            # Debug: Show polygon data status
+            st.info(f"📊 Farm polygons available: {len(farm_polygons)}")
+            st.info(f"📊 Field polygons available: {len(field_polygons)}")
+            if farm_polygons:
+                st.info(f"📍 First farm polygon coordinates: {len(farm_polygons[0].get('coordinates', []))} points")
             
             if isinstance(last_click, dict):
                 lat, lng = last_click.get("lat"), last_click.get("lng")
                 
                 if lat and lng:
-                    # Check farm click
-                    for farm in farm_polygons:
-                        if _point_in_polygon(float(lat), float(lng), farm["coordinates"]):
-                            selected_farm_coordinates = farm["coordinates"]
-                            rain_service = get_rain_service()
-                            
-                            if rain_service.client:
-                                center_lat, center_lon = rain_service.get_farm_center_coordinates(selected_farm_coordinates)
-                                with st.spinner("Fetching rain data..."):
-                                    rain_data = rain_service.get_rain_data(center_lat, center_lon, days_back=365)
-                                    if rain_data is not None:
-                                        rain_stats = rain_service.get_rain_statistics(rain_data)
-                            break
+                    # Reset selections
+                    selected_farm_coordinates = None
+                    selected_field_info = None
                     
-                    # Check well click
-                    if not selected_farm_coordinates and not data["wells_df"].empty:
+                    # Get rain data for any map click
+                    st.info(f"🌧️ Getting rain data for coordinates ({lat}, {lng})")
+                    rain_service = get_rain_service()
+                    
+                    if rain_service.client:
+                        with st.spinner("Fetching rain data..."):
+                            rain_data = rain_service.get_rain_data(float(lat), float(lng), days_back=365)
+                            if rain_data is not None:
+                                rain_stats = rain_service.get_rain_statistics(rain_data)
+                                st.success("✅ Rain data loaded successfully!")
+                            else:
+                                st.error("❌ Failed to load rain data")
+                    else:
+                        st.error("❌ Rain service not available")
+                    
+                    # Field polygon data is now shown in map popup - no need for click detection
+
+                    # Check well click (only if no polygon was clicked)
+                    if not selected_farm_coordinates and not selected_field_info and not data["wells_df"].empty:
                         df = data["wells_df"].copy()
                         df["dist"] = (df["lat"] - float(lat)) ** 2 + (df["lon"] - float(lng)) ** 2
                         nearest = df.nsmallest(1, "dist")
@@ -261,6 +284,22 @@ def main() -> None:
                 data, filtered_wells, map_state, selected_row,
                 selected_farm_region, selected_farm_coordinates, rain_data, rain_stats
             )
+            # Debug: Show field selection status
+            st.markdown("**💧 Field Selection Status**")
+            if selected_field_info is not None:
+                st.success("✅ Field polygon selected")
+                st.markdown("**💧 Selected Field - Additional Water**")
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    st.metric("Field", f"{selected_field_info.get('name', 'N/A')}")
+                with c2:
+                    mm = selected_field_info.get('average_additional_water_mm')
+                    st.metric("Avg Add. Water (mm)", f"{mm:.1f} mm" if mm is not None else "N/A")
+                with c3:
+                    m3 = selected_field_info.get('average_additional_water_m3')
+                    st.metric("Avg Add. Water (m³)", f"{m3:,.0f} m³" if m3 is not None else "N/A")
+            else:
+                st.info("ℹ️ No field polygon selected - click on a field polygon to see additional water data")
         
         elif selected == "Underground Water Discovery":
             render_discovery(data, filtered_wells, map_state, selected_row)

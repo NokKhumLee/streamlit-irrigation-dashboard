@@ -1,5 +1,5 @@
 # geodash/ui/map_panel.py
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import folium
 from folium.plugins import HeatMap
@@ -14,6 +14,7 @@ def build_map_with_controls(
     wells_df: pd.DataFrame,
     heat_points: List[List[float]],
     current_filters: Dict[str, object],
+    field_data_df: Optional[pd.DataFrame] = None,
 ) -> Dict[str, object]:
     """
     Build interactive map with dropdown filter controls.
@@ -65,21 +66,85 @@ def build_map_with_controls(
                 ),
             ).add_to(fmap)
 
-    # Field polygons layer
+    # Field polygons layer with yield coloring
     if show_polygons:
+        # Build quick lookup from field_data by new_plot_code
+        field_lookup = {}
+        if field_data_df is not None and not field_data_df.empty:
+            try:
+                fld = field_data_df.copy()
+                fld['new_plot_code'] = fld['new_plot_code'].astype(str)
+                field_lookup = {
+                    str(row['new_plot_code']): row
+                    for _, row in fld.iterrows()
+                }
+            except Exception:
+                field_lookup = {}
+        # Helper: map yield_probability to color bins (red -> neutral -> green)
+        def color_for_probability(prob: Optional[float]) -> tuple:
+            if prob is None:
+                return ("#bdbdbd", "#737373")  # neutral gray if missing
+            try:
+                p = float(prob)
+            except Exception:
+                return ("#bdbdbd", "#737373")
+            # Five bins: 0-0.2, 0.2-0.4, 0.4-0.6, 0.6-0.8, 0.8-1.0
+            if p < 0.2:
+                return ("#a50f15", "#67000d")  # reddest
+            if p < 0.4:
+                return ("#de2d26", "#a50f15")  # red
+            if p < 0.6:
+                return ("#f0f0f0", "#bdbdbd")  # neutral light
+            if p < 0.8:
+                return ("#31a354", "#238b45")  # green
+            return ("#006d2c", "#00441b")      # greenest
         for poly in polygons:
             coords = poly["coordinates"] + [poly["coordinates"][0]]
+            plot_code = str(poly.get("plot_code", "")) if poly.get("plot_code") is not None else None
+            row = field_lookup.get(plot_code) if plot_code else None
+            # Determine color by yield_probability threshold 0.5
+            if row is not None and 'yield_probability' in row:
+                try:
+                    yp = float(row['yield_probability'])
+                except Exception:
+                    yp = None
+            else:
+                yp = None
+            fill_col, outline_col = color_for_probability(yp)
+            # Popup content
+            popup_html = f"<b>📐 {poly['name']}</b><br>Region: {poly['region']}<br>"
+            if row is not None:
+                # Yield performance
+                yield_prob = float(row['yield_probability'])
+                popup_html += f"Yield Performance: {yield_prob:.2f}<br>"
+                
+                # Area
+                area_rai = float(row['average_area'])
+                popup_html += f"Area (rai): {area_rai:.2f}<br>"
+                
+                # Additional water data
+                if 'average_additional_water(mm)' in row:
+                    add_water_mm = float(row['average_additional_water(mm)'])
+                    popup_html += f"Additional Water (mm): {add_water_mm:.1f}<br>"
+                    
+                    # Calculate cubic meters: area_rai * 1600 * (mm/1000)
+                    add_water_m3 = area_rai * 1600.0 * (add_water_mm / 1000.0)
+                    popup_html += f"Additional Water (m³): {add_water_m3:,.0f}"
+                else:
+                    popup_html += "Additional Water: N/A"
+            else:
+                popup_html += "Yield Performance: N/A<br>Area: N/A<br>Additional Water: N/A"
             folium.Polygon(
                 locations=coords,
-                color="#2c7fb8",
+                color=outline_col,
                 weight=1,
                 fill=True,
-                fill_color="#a6bddb",
-                fill_opacity=0.2,
+                fill_color=fill_col,
+                fill_opacity=0.35,
                 tooltip=f"📐 {poly['name']} ({poly['region']})",
                 popup=folium.Popup(
-                    f"<b>📐 {poly['name']}</b><br>Region: {poly['region']}<br>Type: Field Boundary",
-                    max_width=250
+                    popup_html,
+                    max_width=280
                 ),
             ).add_to(fmap)
 
@@ -105,7 +170,7 @@ def build_map_with_controls(
         HeatMap(heat_points, radius=18, blur=22, min_opacity=0.3).add_to(fmap)
 
     # Render map
-    map_state = st_folium(fmap, width=None, height=600, returned_objects=["last_object_clicked"])
+    map_state = st_folium(fmap, width=None, height=600, returned_objects=["last_object_clicked", "last_clicked"])
     
     # Return both map state and current layer settings
     return {
@@ -116,7 +181,8 @@ def build_map_with_controls(
             "show_wells": show_wells,
             "show_heatmap": show_heatmap,
         },
-        "farm_polygons": farm_polygons if show_farms else []
+        "farm_polygons": farm_polygons if show_farms else [],
+        "field_layer_enriched": bool(field_data_df is not None and not field_data_df.empty)
     }
 
 

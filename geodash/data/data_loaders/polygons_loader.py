@@ -160,11 +160,21 @@ class PolygonsLoader(BaseGeospatialLoader, DataValidationMixin):
                         # Try common field names for name and region
                         name = self._find_polygon_name(row, i)
                         region = self._find_polygon_region(row, coords)
+                        # Capture plot_code for matching with field data if available
+                        plot_code_value = None
+                        try:
+                            if 'plot_code' in row.index:
+                                plot_code_value = row['plot_code']
+                            elif 'PLOT_CODE' in row.index:
+                                plot_code_value = row['PLOT_CODE']
+                        except Exception:
+                            plot_code_value = None
                         
                         polygons.append({
                             "name": name,
                             "region": region,
-                            "coordinates": coords
+                            "coordinates": coords,
+                            **({"plot_code": str(plot_code_value)} if plot_code_value is not None else {})
                         })
                         
             except Exception as e:
