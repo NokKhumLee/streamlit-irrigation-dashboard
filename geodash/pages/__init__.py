@@ -7,10 +7,12 @@ from .main_dashboard import render_main_dashboard
 from .water_survival import render_water_survival
 from .discovery import render_discovery
 from .ai_assistant import render_ai_assistant
+from .fields_analysis import render_fields_analysis
 
 __all__ = [
     "render_main_dashboard",
     "render_water_survival",
     "render_discovery",
     "render_ai_assistant",
+    "render_fields_analysis",
 ]

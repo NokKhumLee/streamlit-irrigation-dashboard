@@ -1,6 +1,6 @@
 """
 Badan (บาดาล) - Geological Dashboard
-Main application file with distance-to-farm filtering.
+Main application file with Fields Analysis page.
 """
 from typing import Optional
 import streamlit as st
@@ -16,6 +16,7 @@ from geodash.pages import (
     render_water_survival,
     render_discovery,
     render_ai_assistant,
+    render_fields_analysis,
 )
 
 
@@ -69,89 +70,92 @@ def main() -> None:
     with st.sidebar:
         selected = option_menu(
             menu_title="Badan (บาดาล)",
-            options=["Main", "Water Survival Analysis", "Underground Water Discovery", "AI Assistant"],
-            icons=['house', 'droplet', 'search', 'robot'],
+            options=["Main", "Water Survival Analysis", "Underground Water Discovery", "Fields Analysis", "AI Assistant"],
+            icons=['house', 'droplet', 'search', 'grid-3x3', 'robot'],
             menu_icon="globe",
             default_index=0,
         )
         
         st.markdown("---")
         
-        # Load data WITHOUT distance filter (load all wells, filter in UI)
+        # Load data
         if 'data' not in st.session_state:
             st.session_state.data = load_dashboard_data(max_distance_to_farm_m=None)
         
         data = st.session_state.data
         
-        # Sidebar filters
-        st.sidebar.header("Data Filters")
-        
-        # Search filter
-        search_q = st.sidebar.text_input("Search Well/Polygon ID")
-        
-        # Region filter
-        region = st.sidebar.selectbox(
-            "Region", 
-            options=["All"] + sorted(data["wells_df"]["region"].unique().tolist())
-        )
-        
-        # Depth filter
-        min_depth, max_depth = int(data["wells_df"]["depth_m"].min()), int(data["wells_df"]["depth_m"].max())
-        depth_range = st.sidebar.slider(
-            "Depth range (m)", 
-            min_value=min_depth, 
-            max_value=max_depth, 
-            value=(min_depth, max_depth), 
-            step=5
-        )
-        
-        # NEW: Distance to Farm Filter
-        st.sidebar.subheader("🏚️ Distance to Farm")
-        
-        if 'distance_to_farm' in data["wells_df"].columns and not data["wells_df"].empty:
-            min_distance_m = int(data["wells_df"]["distance_to_farm"].min())
-            actual_max_distance_m = int(data["wells_df"]["distance_to_farm"].max())
+        # Show filters only for relevant pages (not Fields Analysis)
+        if selected != "Fields Analysis":
+            # Sidebar filters
+            st.sidebar.header("Data Filters")
             
-            # Convert to kilometers for the slider
-            min_distance_km = min_distance_m / 1000
-            max_distance_km = 30.0  # 30km maximum
-            default_distance_km = 10.0  # 10km default
+            # Search filter
+            search_q = st.sidebar.text_input("Search Well/Polygon ID")
             
-            distance_range_km = st.sidebar.slider(
-                "Max distance to farm (km)", 
-                min_value=min_distance_km, 
-                max_value=max_distance_km, 
-                value=default_distance_km, 
-                step=0.5,
-                help="Filter wells by maximum distance to nearest farm"
+            # Region filter
+            region = st.sidebar.selectbox(
+                "Region", 
+                options=["All"] + sorted(data["wells_df"]["region"].unique().tolist())
             )
             
-            # Convert back to meters for internal use
-            distance_range = int(distance_range_km * 1000)
+            # Depth filter
+            min_depth, max_depth = int(data["wells_df"]["depth_m"].min()), int(data["wells_df"]["depth_m"].max())
+            depth_range = st.sidebar.slider(
+                "Depth range (m)", 
+                min_value=min_depth, 
+                max_value=max_depth, 
+                value=(min_depth, max_depth), 
+                step=5
+            )
             
-            # Show wells matching current filter
-            wells_in_filter = (data["wells_df"]["distance_to_farm"] <= distance_range).sum()
-            st.sidebar.caption(f"📊 Wells within {distance_range_km:.1f}km: **{wells_in_filter:,}**")
+            # Distance to Farm Filter
+            st.sidebar.subheader("🏚️ Distance to Farm")
+            
+            if 'distance_to_farm' in data["wells_df"].columns and not data["wells_df"].empty:
+                min_distance_m = int(data["wells_df"]["distance_to_farm"].min())
+                actual_max_distance_m = int(data["wells_df"]["distance_to_farm"].max())
+                
+                min_distance_km = min_distance_m / 1000
+                max_distance_km = 30.0
+                default_distance_km = 10.0
+                
+                distance_range_km = st.sidebar.slider(
+                    "Max distance to farm (km)", 
+                    min_value=min_distance_km, 
+                    max_value=max_distance_km, 
+                    value=default_distance_km, 
+                    step=0.5,
+                    help="Filter wells by maximum distance to nearest farm"
+                )
+                
+                distance_range = int(distance_range_km * 1000)
+                
+                wells_in_filter = (data["wells_df"]["distance_to_farm"] <= distance_range).sum()
+                st.sidebar.caption(f"📊 Wells within {distance_range_km:.1f}km: **{wells_in_filter:,}**")
+            else:
+                distance_range = 10000
+                st.sidebar.info("Distance data not available")
+            
+            # Farm selection for Water Survival page
+            if selected == "Water Survival Analysis":
+                st.sidebar.header("Farm Analysis")
+                available_regions = ["All"] + sorted(data["farm_time_series"]["region"].unique().tolist()) if not data["farm_time_series"].empty else ["All"]
+                selected_farm_region = st.sidebar.selectbox("Select Farm/Region", options=available_regions)
+                selected_farm_region = None if selected_farm_region == "All" else selected_farm_region
+            else:
+                selected_farm_region = None
+            
+            # Build filters dictionary
+            filters = {
+                "search_q": search_q, 
+                "region": region, 
+                "depth_range": depth_range,
+                "distance_range": distance_range
+            }
         else:
-            distance_range = 10000  # Default 10km in meters
-            st.sidebar.info("Distance data not available")
-        
-        # Farm selection for Water Survival page
-        if selected == "Water Survival Analysis":
-            st.sidebar.header("Farm Analysis")
-            available_regions = ["All"] + sorted(data["farm_time_series"]["region"].unique().tolist()) if not data["farm_time_series"].empty else ["All"]
-            selected_farm_region = st.sidebar.selectbox("Select Farm/Region", options=available_regions)
-            selected_farm_region = None if selected_farm_region == "All" else selected_farm_region
-        else:
+            # Fields Analysis page - no filters needed
+            filters = None
             selected_farm_region = None
-        
-        # Build filters dictionary
-        filters = {
-            "search_q": search_q, 
-            "region": region, 
-            "depth_range": depth_range,
-            "distance_range": distance_range
-        }
         
         st.markdown("---")
         st.markdown("""
@@ -163,6 +167,14 @@ def main() -> None:
         </div>
         """, unsafe_allow_html=True)
     
+    # === FIELDS ANALYSIS PAGE (CUSTOM LAYOUT) ===
+    if selected == "Fields Analysis":
+        # Custom layout - no sidebar columns, full width
+        st.title("🏞️ Fields Analysis")
+        render_fields_analysis(data)
+        return  # Exit early, don't use standard layout
+    
+    # === STANDARD LAYOUT FOR OTHER PAGES ===
     # Page title
     st.title(f"🔍 {selected}")
     
@@ -224,13 +236,11 @@ def main() -> None:
             field_polygons = data.get("polygons", [])
             field_data_df = data.get("field_data_df")
             
-            # Debug: Show click detection status
             if last_click:
                 st.info(f"🖱️ Map click detected: {last_click}")
             else:
                 st.info("ℹ️ No map click detected")
             
-            # Debug: Show polygon data status
             st.info(f"📊 Farm polygons available: {len(farm_polygons)}")
             st.info(f"📊 Field polygons available: {len(field_polygons)}")
             if farm_polygons:
@@ -259,9 +269,7 @@ def main() -> None:
                     else:
                         st.error("❌ Rain service not available")
                     
-                    # Field polygon data is now shown in map popup - no need for click detection
-
-                    # Check well click (only if no polygon was clicked)
+                    # Check well click
                     if not selected_farm_coordinates and not selected_field_info and not data["wells_df"].empty:
                         df = data["wells_df"].copy()
                         df["dist"] = (df["lat"] - float(lat)) ** 2 + (df["lon"] - float(lng)) ** 2
