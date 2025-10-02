@@ -28,7 +28,7 @@ def render_water_survival(
     rain_stats: Optional[Dict]
 ) -> None:
     """
-    Render the water survival analysis page.
+    Render the water survival analysis page - now only shows rain statistics.
     
     Args:
         data: Complete dashboard data
@@ -41,46 +41,34 @@ def render_water_survival(
         rain_stats: Rain statistics if farm selected
     """
     
+    # Title and instructions
+    st.title("🌧️ Rain Data Analysis")
+    st.markdown("### Click on the map to view rain data for any location")
+    
+    # Check if user clicked somewhere while on other pages and offer to load that data
+    if rain_data is None and "last_clicked_coordinates" in st.session_state:
+        clicked_lat, clicked_lng = st.session_state.last_clicked_coordinates
+        if st.button(f"🌧️ Load rain data for last clicked location ({clicked_lat:.4f}, {clicked_lng:.4f})"):
+            # This will trigger a rerun with rain data fetching
+            rain_service = get_rain_service()
+            if rain_service.client:
+                with st.spinner("Fetching rain data..."):
+                    rain_data = rain_service.get_rain_data(clicked_lat, clicked_lng, days_back=365)
+                    if rain_data is not None:
+                        rain_stats = rain_service.get_rain_statistics(rain_data)
+                        st.session_state.last_rain_coordinates = (clicked_lat, clicked_lng)
+                        st.rerun()
+    
     # Show rain data if available
-    st.markdown("**🌧️ Rain Data Status**")
     if rain_data is not None:
         st.success(f"✅ Rain data loaded: {len(rain_data)} records")
         chart_rain_statistics(rain_data, rain_stats)
     else:
-        st.info("ℹ️ No rain data available - click anywhere on the map to get rain data for that location")
-    st.markdown("---")
-
-    
-    # Farm-based time series analysis
-    st.markdown("**🚜 Farm Survival Analytics**")
-    chart_farm_survival_analytics(data["farm_time_series"], selected_farm_region)
-    
-    # Show regional comparison if no specific region selected
-    if selected_farm_region is None:
-        st.markdown("**📊 Regional Comparison**")
-        chart_region_comparison(data["farm_time_series"])
-        
-        st.markdown("**🌿 Seasonal Analysis**")
-        chart_seasonal_analysis(data["farm_time_series"])
-    
-    st.markdown("---")
-    
-    # Overall well success rate
-    st.markdown("**📈 Overall Well Success Rate**")
-    chart_survival_rate(filtered_wells)
-    
-    st.markdown("---")
-    
-    # Metadata
-    st.markdown("**📋 Selected Well Metadata**")
-    metadata_panel(selected_row)
-    
-    # Instructions
-    if selected_farm_coordinates is None:
-        st.info("""
-        **💡 Tips:**
-        - Click on a farm polygon (colored areas) to view rain statistics
-        - Select a specific region in the sidebar for detailed time series analysis
-        - Use the map controls to show/hide different layers
+        st.info("ℹ️ Click anywhere on the map to get rain data for that location")
+        st.markdown("""
+        **💡 How to use:**
+        - Click on any point on the map to fetch rainfall data for that location
+        - The system will show rainfall statistics, trends, and seasonal patterns
+        - Data covers the last 365 days from the selected point
         """)
 

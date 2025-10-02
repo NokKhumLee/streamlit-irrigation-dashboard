@@ -5,6 +5,7 @@ Main application file with Fields Analysis page.
 from typing import Optional
 import streamlit as st
 from streamlit_option_menu import option_menu
+import math
 
 from geodash.data import load_dashboard_data, filter_wells
 from geodash.data.rain_service import get_rain_service
@@ -12,12 +13,44 @@ from geodash.ui import build_map_with_controls
 
 # Import page renderers
 from geodash.pages import (
-    render_main_dashboard,
     render_water_survival,
     render_discovery,
     render_ai_assistant,
     render_fields_analysis,
 )
+from geodash.pages.general_dashboard import render_general_dashboard
+from geodash.pages.water_station import render_water_station_page
+from geodash.data.data_loaders.water_stations_loader import WaterStationsLoader
+
+
+def calculate_distance_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    """
+    Calculate the distance between two coordinates in kilometers using Haversine formula.
+    
+    Args:
+        lat1, lng1: First coordinate
+        lat2, lng2: Second coordinate
+        
+    Returns:
+        Distance in kilometers
+    """
+    # Convert to radians
+    lat1_rad = math.radians(lat1)
+    lng1_rad = math.radians(lng1)
+    lat2_rad = math.radians(lat2)
+    lng2_rad = math.radians(lng2)
+    
+    # Haversine formula
+    dlat = lat2_rad - lat1_rad
+    dlng = lng2_rad - lng1_rad
+    
+    a = math.sin(dlat/2)**2 + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(dlng/2)**2
+    c = 2 * math.asin(math.sqrt(a))
+    
+    # Earth's radius in kilometers
+    r = 6371
+    
+    return c * r
 
 
 def initialize_page_config() -> None:
@@ -70,8 +103,8 @@ def main() -> None:
     with st.sidebar:
         selected = option_menu(
             menu_title="Badan (บาดาล)",
-            options=["Main", "Water Survival Analysis", "Underground Water Discovery", "Fields Analysis", "AI Assistant"],
-            icons=['house', 'droplet', 'search', 'grid-3x3', 'robot'],
+            options=["General Dashboard", "Rain Data Analysis", "Water Survival Analysis", "Underground Water Discovery", "Fields Analysis", "AI Assistant"],
+            icons=['house', 'droplet', 'building', 'search', 'grid-3x3', 'robot'],
             menu_icon="globe",
             default_index=0,
         )
@@ -83,6 +116,13 @@ def main() -> None:
             st.session_state.data = load_dashboard_data(max_distance_to_farm_m=None)
         
         data = st.session_state.data
+        
+        # Load water station data
+        if 'water_stations_data' not in st.session_state:
+            water_stations_loader = WaterStationsLoader()
+            st.session_state.water_stations_data = water_stations_loader.load_data()
+        
+        water_stations_data = st.session_state.water_stations_data
         
         # Show filters only for relevant pages (not Fields Analysis)
         if selected != "Fields Analysis":
@@ -197,10 +237,11 @@ def main() -> None:
     with col_map:
         # Default layer settings per page
         default_layers = {
-            "Main": {"show_polygons": True, "show_farms": True, "show_wells": True, "show_heatmap": False},
-            "Water Survival Analysis": {"show_polygons": False, "show_farms": True, "show_wells": True, "show_heatmap": False},
-            "Underground Water Discovery": {"show_polygons": True, "show_farms": True, "show_wells": True, "show_heatmap": True},
-            "AI Assistant": {"show_polygons": True, "show_farms": False, "show_wells": False, "show_heatmap": False},
+            "General Dashboard": {"show_polygons": True, "show_farms": True, "show_wells": True, "show_water_stations": False, "show_heatmap": False},
+            "Rain Data Analysis": {"show_polygons": False, "show_farms": True, "show_wells": True, "show_water_stations": False, "show_heatmap": False},
+            "Water Survival Analysis": {"show_polygons": False, "show_farms": False, "show_wells": False, "show_water_stations": True, "show_heatmap": False},
+            "Underground Water Discovery": {"show_polygons": True, "show_farms": True, "show_wells": True, "show_water_stations": False, "show_heatmap": True},
+            "AI Assistant": {"show_polygons": True, "show_farms": False, "show_wells": False, "show_water_stations": False, "show_heatmap": False},
         }
         
         map_state = build_map_with_controls(
@@ -210,6 +251,7 @@ def main() -> None:
             data["heat_points"],
             current_filters=default_layers.get(selected, {}),
             field_data_df=data.get("field_data_df"),
+            water_stations_df=water_stations_data.get('stations_df')
         )
     
     # Dashboard content
@@ -236,15 +278,6 @@ def main() -> None:
             field_polygons = data.get("polygons", [])
             field_data_df = data.get("field_data_df")
             
-            if last_click:
-                st.info(f"🖱️ Map click detected: {last_click}")
-            else:
-                st.info("ℹ️ No map click detected")
-            
-            st.info(f"📊 Farm polygons available: {len(farm_polygons)}")
-            st.info(f"📊 Field polygons available: {len(field_polygons)}")
-            if farm_polygons:
-                st.info(f"📍 First farm polygon coordinates: {len(farm_polygons[0].get('coordinates', []))} points")
             
             if isinstance(last_click, dict):
                 lat, lng = last_click.get("lat"), last_click.get("lng")
@@ -254,20 +287,37 @@ def main() -> None:
                     selected_farm_coordinates = None
                     selected_field_info = None
                     
-                    # Get rain data for any map click
-                    st.info(f"🌧️ Getting rain data for coordinates ({lat}, {lng})")
-                    rain_service = get_rain_service()
-                    
-                    if rain_service.client:
-                        with st.spinner("Fetching rain data..."):
-                            rain_data = rain_service.get_rain_data(float(lat), float(lng), days_back=365)
-                            if rain_data is not None:
-                                rain_stats = rain_service.get_rain_statistics(rain_data)
-                                st.success("✅ Rain data loaded successfully!")
+                    # Only fetch rain data if user is on Rain Data Analysis page
+                    if selected == "Rain Data Analysis":
+                        # Check if we need to query new rain data (coordinate caching)
+                        should_query_rain = True
+                        if "last_rain_coordinates" in st.session_state:
+                            last_lat, last_lng = st.session_state.last_rain_coordinates
+                            distance_km = calculate_distance_km(float(lat), float(lng), last_lat, last_lng)
+                            if distance_km < 1.0:  # Within 1km range
+                                should_query_rain = False
+                                st.info(f"🌧️ Using cached rain data (distance: {distance_km:.2f}km from last query)")
+                        
+                        if should_query_rain:
+                            # Get rain data for new coordinates
+                            st.info(f"🌧️ Getting rain data for coordinates ({lat}, {lng})")
+                            rain_service = get_rain_service()
+                            
+                            if rain_service.client:
+                                with st.spinner("Fetching rain data..."):
+                                    rain_data = rain_service.get_rain_data(float(lat), float(lng), days_back=365)
+                                    if rain_data is not None:
+                                        rain_stats = rain_service.get_rain_statistics(rain_data)
+                                        # Cache the coordinates
+                                        st.session_state.last_rain_coordinates = (float(lat), float(lng))
+                                        st.success("✅ Rain data loaded successfully!")
+                                    else:
+                                        st.error("❌ Failed to load rain data")
                             else:
-                                st.error("❌ Failed to load rain data")
+                                st.error("❌ Rain service not available")
                     else:
-                        st.error("❌ Rain service not available")
+                        # Store clicked coordinates for potential rain data query later
+                        st.session_state.last_clicked_coordinates = (float(lat), float(lng))
                     
                     # Check well click
                     if not selected_farm_coordinates and not selected_field_info and not data["wells_df"].empty:
@@ -284,30 +334,20 @@ def main() -> None:
                 selected_row = match.iloc[0]
         
         # Render page-specific content
-        if selected == "Main":
-            render_main_dashboard(data, filtered_wells, map_state, selected_row)
+        if selected == "General Dashboard":
+            render_general_dashboard(
+                data, filtered_wells, map_state, selected_row,
+                selected_farm_region, selected_farm_coordinates
+            )
         
-        elif selected == "Water Survival Analysis":
+        elif selected == "Rain Data Analysis":
             render_water_survival(
                 data, filtered_wells, map_state, selected_row,
                 selected_farm_region, selected_farm_coordinates, rain_data, rain_stats
             )
-            # Debug: Show field selection status
-            st.markdown("**💧 Field Selection Status**")
-            if selected_field_info is not None:
-                st.success("✅ Field polygon selected")
-                st.markdown("**💧 Selected Field - Additional Water**")
-                c1, c2, c3 = st.columns(3)
-                with c1:
-                    st.metric("Field", f"{selected_field_info.get('name', 'N/A')}")
-                with c2:
-                    mm = selected_field_info.get('average_additional_water_mm')
-                    st.metric("Avg Add. Water (mm)", f"{mm:.1f} mm" if mm is not None else "N/A")
-                with c3:
-                    m3 = selected_field_info.get('average_additional_water_m3')
-                    st.metric("Avg Add. Water (m³)", f"{m3:,.0f} m³" if m3 is not None else "N/A")
-            else:
-                st.info("ℹ️ No field polygon selected - click on a field polygon to see additional water data")
+        
+        elif selected == "Water Survival Analysis":
+            render_water_station_page()
         
         elif selected == "Underground Water Discovery":
             render_discovery(data, filtered_wells, map_state, selected_row)

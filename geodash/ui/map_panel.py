@@ -15,6 +15,7 @@ def build_map_with_controls(
     heat_points: List[List[float]],
     current_filters: Dict[str, object],
     field_data_df: Optional[pd.DataFrame] = None,
+    water_stations_df: Optional[pd.DataFrame] = None,
 ) -> Dict[str, object]:
     """
     Build interactive map with dropdown filter controls.
@@ -26,7 +27,7 @@ def build_map_with_controls(
     # Dropdown panel for map layer controls
     with st.expander("🎛️ Map Layer Controls", expanded=False):
         # Create columns for controls inside the expander
-        col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
+        col1, col2, col3, col4, col5 = st.columns([1, 1, 1, 1, 1])
         
         with col1:
             show_polygons = st.checkbox("🏞️ Fields", value=current_filters.get("show_polygons", True), key="map_polygons")
@@ -35,6 +36,8 @@ def build_map_with_controls(
         with col3:
             show_wells = st.checkbox("🏔️ Wells", value=current_filters.get("show_wells", True), key="map_wells")
         with col4:
+            show_water_stations = st.checkbox("🏭 Water Stations", value=current_filters.get("show_water_stations", False), key="map_water_stations")
+        with col5:
             show_heatmap = st.checkbox("💧  Wells Distribution", value=current_filters.get("show_heatmap", False), key="map_heatmap")
     
     # Small separator
@@ -203,6 +206,32 @@ def build_map_with_controls(
                 tooltip=r["well_id"],
             ).add_to(fmap)
 
+    # Water stations layer
+    if show_water_stations and water_stations_df is not None and not water_stations_df.empty:
+        for _, station in water_stations_df.iterrows():
+            station_id = station.get('station_id', 'Unknown')
+            well_number = station.get('well_number', 'Unknown')
+            location = station.get('location', 'Unknown')
+            
+            popup_html = (
+                f"<b>🏭 Water Station</b><br>"
+                f"Station ID: {station_id}<br>"
+                f"Well Number: {well_number}<br>"
+                f"Location: {location}<br>"
+                f"Province: {station.get('province', 'Unknown')}"
+            )
+            
+            folium.CircleMarker(
+                location=[float(station["latitude"]), float(station["longitude"])],
+                radius=6,
+                color="#1f77b4",
+                fill=True,
+                fill_color="#1f77b4",
+                fill_opacity=0.7,
+                popup=folium.Popup(popup_html, max_width=250),
+                tooltip=f"🏭 {station_id} - {well_number}",
+            ).add_to(fmap)
+
     # Heatmap layer
     if show_heatmap and heat_points:
         HeatMap(heat_points, radius=18, blur=22, min_opacity=0.3).add_to(fmap)
@@ -217,6 +246,7 @@ def build_map_with_controls(
             "show_polygons": show_polygons,
             "show_farms": show_farms,
             "show_wells": show_wells,
+            "show_water_stations": show_water_stations,
             "show_heatmap": show_heatmap,
         },
         "farm_polygons": farm_polygons if show_farms else [],
