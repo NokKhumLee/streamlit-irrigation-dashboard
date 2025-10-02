@@ -80,29 +80,67 @@ def build_map_with_controls(
                 }
             except Exception:
                 field_lookup = {}
-        # Helper: map yield_probability to color bins (red -> neutral -> green)
-        def color_for_probability(prob: Optional[float]) -> tuple:
+        # Helper: map yield_probability to dynamic color interpolation
+        def color_for_probability(prob: Optional[float], data_min: float = 0.0, data_max: float = 1.0) -> tuple:
             if prob is None:
                 return ("#bdbdbd", "#737373")  # neutral gray if missing
             try:
                 p = float(prob)
             except Exception:
                 return ("#bdbdbd", "#737373")
-            # Five bins: 0-0.2, 0.2-0.4, 0.4-0.6, 0.6-0.8, 0.8-1.0
-            if p < 0.2:
-                return ("#a50f15", "#67000d")  # reddest
-            if p < 0.4:
-                return ("#de2d26", "#a50f15")  # red
-            if p < 0.6:
-                return ("#f0f0f0", "#bdbdbd")  # neutral light
-            if p < 0.8:
-                return ("#31a354", "#238b45")  # green
-            return ("#006d2c", "#00441b")      # greenest
+            
+            # Normalize the probability to 0-1 range based on actual data range
+            normalized_prob = (p - data_min) / (data_max - data_min) if data_max > data_min else 0.5
+            normalized_prob = max(0.0, min(1.0, normalized_prob))  # Clamp to [0, 1]
+            
+            # Define color stops for smooth interpolation
+            # Red (low values) -> Neutral (middle) -> Green (high values)
+            color_stops = [
+                (0.0, "#a50f15", "#67000d"),    # reddest
+                (0.25, "#de2d26", "#a50f15"),   # red
+                (0.5, "#f0f0f0", "#bdbdbd"),    # neutral
+                (0.75, "#31a354", "#238b45"),   # green
+                (1.0, "#006d2c", "#00441b")     # greenest
+            ]
+            
+            # Find the two color stops to interpolate between
+            for i in range(len(color_stops) - 1):
+                if normalized_prob <= color_stops[i + 1][0]:
+                    # Interpolate between color_stops[i] and color_stops[i + 1]
+                    t = (normalized_prob - color_stops[i][0]) / (color_stops[i + 1][0] - color_stops[i][0])
+                    
+                    # Interpolate fill color (hex to RGB)
+                    fill_rgb1 = tuple(int(color_stops[i][1][j:j+2], 16) for j in (1, 3, 5))
+                    fill_rgb2 = tuple(int(color_stops[i + 1][1][j:j+2], 16) for j in (1, 3, 5))
+                    fill_rgb = tuple(int(fill_rgb1[k] + t * (fill_rgb2[k] - fill_rgb1[k])) for k in range(3))
+                    fill_color = f"#{fill_rgb[0]:02x}{fill_rgb[1]:02x}{fill_rgb[2]:02x}"
+                    
+                    # Interpolate outline color
+                    outline_rgb1 = tuple(int(color_stops[i][2][j:j+2], 16) for j in (1, 3, 5))
+                    outline_rgb2 = tuple(int(color_stops[i + 1][2][j:j+2], 16) for j in (1, 3, 5))
+                    outline_rgb = tuple(int(outline_rgb1[k] + t * (outline_rgb2[k] - outline_rgb1[k])) for k in range(3))
+                    outline_color = f"#{outline_rgb[0]:02x}{outline_rgb[1]:02x}{outline_rgb[2]:02x}"
+                    
+                    return (fill_color, outline_color)
+            
+            # Fallback to the last color stop
+            return (color_stops[-1][1], color_stops[-1][2])
+        # Calculate data range for dynamic color mapping
+        data_min, data_max = 0.0, 1.0  # Default range
+        if field_data_df is not None and not field_data_df.empty and 'yield_probability' in field_data_df.columns:
+            try:
+                valid_probs = field_data_df['yield_probability'].dropna()
+                if not valid_probs.empty:
+                    data_min = float(valid_probs.min())
+                    data_max = float(valid_probs.max())
+            except Exception:
+                pass  # Use default range if calculation fails
+        
         for poly in polygons:
             coords = poly["coordinates"] + [poly["coordinates"][0]]
             plot_code = str(poly.get("plot_code", "")) if poly.get("plot_code") is not None else None
             row = field_lookup.get(plot_code) if plot_code else None
-            # Determine color by yield_probability threshold 0.5
+            # Determine color by yield_probability with dynamic range
             if row is not None and 'yield_probability' in row:
                 try:
                     yp = float(row['yield_probability'])
@@ -110,7 +148,7 @@ def build_map_with_controls(
                     yp = None
             else:
                 yp = None
-            fill_col, outline_col = color_for_probability(yp)
+            fill_col, outline_col = color_for_probability(yp, data_min, data_max)
             # Popup content
             popup_html = f"<b>📐 {poly['name']}</b><br>Region: {poly['region']}<br>"
             if row is not None:
