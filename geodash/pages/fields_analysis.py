@@ -1,5 +1,6 @@
 """
 Fields Analysis page - Comprehensive farm and field analysis with custom layout.
+Updated to use 'average_yield' from field_data.csv instead of yield_probability.
 """
 from typing import Dict, List, Optional
 import pandas as pd
@@ -35,7 +36,6 @@ def calculate_farm_statistics(field_data_df: pd.DataFrame, farm_polygons: List[D
             'farm_name': farm_name,
             'total_fields': len(field_data_df),
             'total_area_rai': field_data_df['average_area'].sum() if 'average_area' in field_data_df.columns else 0,
-            'avg_yield_prob': field_data_df['yield_probability'].mean() if 'yield_probability' in field_data_df.columns else 0,
             'avg_actual_yield': field_data_df['average_yield'].mean() if 'average_yield' in field_data_df.columns else 0,
             'total_additional_water_mm': field_data_df['average_additional_water(mm)'].sum() if 'average_additional_water(mm)' in field_data_df.columns else 0,
             'area_hectares': farm.get('area_hectares', 0),
@@ -101,17 +101,17 @@ def render_farms_dashboard(farm_stats_df: pd.DataFrame) -> None:
             st.altair_chart(area_chart, use_container_width=True)
     
     with col_chart2:
-        st.markdown("### 🌾 Yield Performance by Farm")
+        st.markdown("### 🌾 Average Actual Yields (3 years) by Farm")
         
-        if not farm_stats_df.empty and 'avg_yield_prob' in farm_stats_df.columns:
+        if not farm_stats_df.empty and 'avg_actual_yield' in farm_stats_df.columns:
             yield_chart = (
                 alt.Chart(farm_stats_df)
                 .mark_bar()
                 .encode(
                     x=alt.X('farm_name:N', title='Farm Name', sort='-y'),
-                    y=alt.Y('avg_yield_prob:Q', title='Yield Performance'),
-                    color=alt.Color('avg_yield_prob:Q', scale=alt.Scale(scheme='greens')),
-                    tooltip=['farm_name:N', 'avg_yield_prob:Q', 'total_fields:Q']
+                    y=alt.Y('avg_actual_yield:Q', title='Average Yield (tons/rai)'),
+                    color=alt.Color('avg_actual_yield:Q', scale=alt.Scale(scheme='greens')),
+                    tooltip=['farm_name:N', 'avg_actual_yield:Q', 'total_fields:Q']
                 )
                 .properties(height=300)
             )
@@ -130,7 +130,6 @@ def render_farms_dashboard(farm_stats_df: pd.DataFrame) -> None:
                 'Area (rai)': f"{row['area_rai']:,.2f}",
                 'Area (ha)': f"{row['area_hectares']:,.2f}",
                 'Avg Yield (t/rai)': f"{row['avg_actual_yield']:.2f}" if 'avg_actual_yield' in row else 'N/A',
-                'Yield Prob': f"{row['avg_yield_prob']:.2f}" if 'avg_yield_prob' in row else 'N/A',
                 'Add. Water (mm)': f"{row['total_additional_water_mm']:,.1f}"
             })
         
@@ -200,25 +199,27 @@ def build_farm_map(
         except Exception:
             field_lookup = {}
     
-    # Helper function for field colors
-    def color_for_yield(yield_prob: Optional[float]) -> tuple:
-        if yield_prob is None:
-            return ("#bdbdbd", "#737373")
+    # Helper function for field colors based on actual yield
+    def color_for_yield(yield_value: Optional[float]) -> tuple:
+        """Color fields based on actual yield (tons/rai)"""
+        if yield_value is None:
+            return ("#bdbdbd", "#737373")  # Gray for no data
         
         try:
-            p = float(yield_prob)
+            y = float(yield_value)
         except Exception:
             return ("#bdbdbd", "#737373")
         
-        # Color scale from red (low) to green (high)
-        if p < 0.3:
-            return ("#de2d26", "#a50f15")
-        elif p < 0.5:
-            return ("#fc9272", "#de2d26")
-        elif p < 0.7:
-            return ("#a1d99b", "#74c476")
+        # Sugarcane yield benchmarks (tons/rai):
+        # Excellent: >10, Good: 8-10, Average: 6-8, Poor: <6
+        if y >= 10.0:
+            return ("#31a354", "#238b45")  # Dark green - Excellent
+        elif y >= 8.0:
+            return ("#a1d99b", "#74c476")  # Medium green - Good
+        elif y >= 6.0:
+            return ("#fc9272", "#de2d26")  # Orange-red - Average
         else:
-            return ("#31a354", "#238b45")
+            return ("#de2d26", "#a50f15")  # Red - Poor
     
     # Add field polygons
     for field_poly in field_polygons:
@@ -230,16 +231,16 @@ def build_farm_map(
         plot_code = str(field_poly.get('plot_code', '')) if field_poly.get('plot_code') is not None else None
         row = field_lookup.get(plot_code) if plot_code else None
         
-        # Get yield probability and colors
-        if row is not None and 'yield_probability' in row:
+        # Get actual yield and colors
+        if row is not None and 'average_yield' in row:
             try:
-                yield_prob = float(row['yield_probability'])
+                actual_yield = float(row['average_yield'])
             except Exception:
-                yield_prob = None
+                actual_yield = None
         else:
-            yield_prob = None
+            actual_yield = None
         
-        fill_color, outline_color = color_for_yield(yield_prob)
+        fill_color, outline_color = color_for_yield(actual_yield)
         
         # Build popup content
         popup_html = f"<b>📐 {field_poly['name']}</b><br>Region: {field_poly['region']}<br>"
@@ -247,8 +248,6 @@ def build_farm_map(
         if row is not None:
             if 'average_yield' in row:
                 popup_html += f"Actual Yield: {float(row['average_yield']):.2f} t/rai<br>"
-            if 'yield_probability' in row:
-                popup_html += f"Yield Probability: {float(row['yield_probability']):.2f}<br>"
             if 'average_area' in row:
                 popup_html += f"Area: {float(row['average_area']):.2f} rai<br>"
             
@@ -353,10 +352,6 @@ def render_field_information(
                     actual_yield = float(field_data['average_yield'])
                     st.metric("Actual Yield (3 yrs)", f"{actual_yield:.2f} t/rai")
                 
-                if 'yield_probability' in field_data:
-                    yield_prob = float(field_data['yield_probability'])
-                    st.metric("Yield Probability", f"{yield_prob:.2f}")
-                
                 if 'average_area' in field_data:
                     area = float(field_data['average_area'])
                     st.metric("Area", f"{area:.2f} rai")
@@ -406,11 +401,10 @@ def render_field_information(
                 'Total Fields': len(field_polygons),
                 'Total Area (rai)': field_data_df['average_area'].sum() if 'average_area' in field_data_df.columns else 0,
                 'Avg Actual Yield (t/rai)': field_data_df['average_yield'].mean() if 'average_yield' in field_data_df.columns else 0,
-                'Avg Yield Probability': field_data_df['yield_probability'].mean() if 'yield_probability' in field_data_df.columns else 0,
             }
             
             for key, value in summary_stats.items():
-                if 'Yield' in key or 'Probability' in key:
+                if 'Yield' in key:
                     st.markdown(f"**{key}:** {value:.2f}")
                 else:
                     st.markdown(f"**{key}:** {value:,.0f}")
@@ -509,15 +503,15 @@ def render_fields_analysis(data: Dict) -> None:
     
     # === MAP LEGEND ===
     st.markdown("---")
-    st.markdown("### 🎨 Map Legend")
+    st.markdown("### 🎨 Map Legend - Actual Yield Performance")
     
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        st.markdown("🟢 **High Yield** (>0.7)")
+        st.markdown("🟢 **Excellent** (≥10 t/rai)")
     with col2:
-        st.markdown("🟡 **Medium Yield** (0.5-0.7)")
+        st.markdown("🟡 **Good** (8-10 t/rai)")
     with col3:
-        st.markdown("🔴 **Low Yield** (<0.5)")
+        st.markdown("🟠 **Average** (6-8 t/rai)")
     with col4:
-        st.markdown("⚪ **No Data**")
+        st.markdown("🔴 **Poor** (<6 t/rai)")
