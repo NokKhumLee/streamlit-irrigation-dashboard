@@ -35,7 +35,7 @@ def build_map_with_controls(
         with col3:
             show_wells = st.checkbox("🏔️ Wells", value=current_filters.get("show_wells", True), key="map_wells")
         with col4:
-            show_heatmap = st.checkbox("💧 Groundwater", value=current_filters.get("show_heatmap", False), key="map_heatmap")
+            show_heatmap = st.checkbox("💧  Wells Distribution", value=current_filters.get("show_heatmap", False), key="map_heatmap")
     
     # Small separator
     st.markdown("---")
