@@ -65,60 +65,42 @@ def render_api_key_form() -> bool:
     """
     st.info("🔐 **Secure API Key Required**")
     
-    col_info, col_form = st.columns([1, 1])
-    
-    with col_info:
-        st.markdown("""
-        **Why we need your API key:**
-        - ✅ Stored in browser session only
-        - ✅ Never saved to disk
-        - ✅ Cleared when you close browser
-        - ✅ Not visible in server logs
+    with st.form("api_key_form"):
+        st.markdown("#### 🔑 Enter API Key")
         
-        **Get Free API Key:**
-        1. Visit [openrouter.ai/keys](https://openrouter.ai/keys)
-        2. Sign up (Google/GitHub)
-        3. Get $1 free credit (~1,000 messages)
-        4. Copy your key
-        """)
-    
-    with col_form:
-        with st.form("api_key_form"):
-            st.markdown("#### 🔑 Enter API Key")
-            
-            api_key_input = st.text_input(
-                "OpenRouter API Key",
-                type="password",
-                placeholder="sk-or-v1-...",
-                help="Your key is stored in memory only"
-            )
-            
-            col_submit, col_demo = st.columns(2)
-            
-            with col_submit:
-                submit = st.form_submit_button("🔐 Connect", type="primary", use_container_width=True)
-            
-            with col_demo:
-                demo = st.form_submit_button("👀 View Demo", use_container_width=True)
-            
-            if submit and api_key_input:
-                if api_key_input.startswith("sk-or-"):
-                    with st.spinner("🔍 Validating API key..."):
-                        is_valid, message = validate_openrouter_key(api_key_input)
-                        
-                        if is_valid:
-                            st.session_state.openrouter_api_key = api_key_input
-                            st.session_state.api_key_validated = True
-                            st.success(message)
-                            st.rerun()
-                        else:
-                            st.error(message)
-                else:
-                    st.error("❌ Invalid key format. Should start with 'sk-or-v1-'")
-            
-            if demo:
-                st.session_state.demo_mode = True
-                st.rerun()
+        api_key_input = st.text_input(
+            "OpenRouter API Key",
+            type="password",
+            placeholder="sk-or-v1-...",
+            help="Your key is stored in memory only"
+        )
+        
+        col_submit, col_demo = st.columns(2)
+        
+        with col_submit:
+            submit = st.form_submit_button("🔐 Connect", type="primary", use_container_width=True)
+        
+        with col_demo:
+            demo = st.form_submit_button("👀 View Demo", use_container_width=True)
+        
+        if submit and api_key_input:
+            if api_key_input.startswith("sk-or-"):
+                with st.spinner("🔍 Validating API key..."):
+                    is_valid, message = validate_openrouter_key(api_key_input)
+                    
+                    if is_valid:
+                        st.session_state.openrouter_api_key = api_key_input
+                        st.session_state.api_key_validated = True
+                        st.success(message)
+                        st.rerun()
+                    else:
+                        st.error(message)
+            else:
+                st.error("❌ Invalid key format. Should start with 'sk-or-v1-'")
+        
+        if demo:
+            st.session_state.demo_mode = True
+            st.rerun()
     
     # Show demo mode if requested
     if st.session_state.get("demo_mode"):
