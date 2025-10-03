@@ -1,14 +1,20 @@
-# geodash/data/mockup.py - Updated to generate farm-based time series
+# geodash/data/mockup.py - Complete version with potential wells generation
 
 """
 Mockup/fallback data generator for the geological dashboard.
 This module provides mock data when real data is not available.
-Updated to generate time series data for farms instead of individual wells.
+Updated to generate time series data for farms and potential drilling locations.
 """
-from typing import Dict, List
-
+from typing import Dict, List, Tuple
 import numpy as np
 import pandas as pd
+
+try:
+    from shapely.geometry import Point, Polygon
+    SHAPELY_AVAILABLE = True
+except ImportError:
+    SHAPELY_AVAILABLE = False
+    print("⚠️ Shapely not available. Potential wells generation will use simplified logic.")
 
 
 def generate_mock_data() -> Dict[str, object]:
@@ -93,39 +99,30 @@ def generate_mock_data() -> Dict[str, object]:
             "lon": lngs,
             "depth_m": depths_m,
             "survived": success,
+            "distance_to_farm": rng.uniform(100, 30000, size=len(well_ids))  # Add distance
         }
     )
 
-    # NEW: Farm-based time series data instead of well-based
-    # Generate time series for each region (representing farm areas)
-    months = pd.date_range(end=pd.Timestamp.today().normalize(), periods=24, freq="MS")  # 2 years of data
+    # Farm-based time series data
+    months = pd.date_range(end=pd.Timestamp.today().normalize(), periods=24, freq="MS")
     
-    # Get unique regions to create farm time series
     unique_regions = regions
     farm_time_series_data = []
     
     for region in np.unique(unique_regions):
-        # Generate realistic seasonal patterns for each farm/region
-        base_survival_rate = rng.uniform(0.6, 0.9)  # Base survival rate for this region
+        base_survival_rate = rng.uniform(0.6, 0.9)
         
         for month in months:
-            # Add seasonal variation (higher in rainy season, lower in dry season)
             month_num = month.month
             seasonal_factor = 1.0
             
-            # Thailand rainy season (May-October) - higher survival rates
             if 5 <= month_num <= 10:
                 seasonal_factor = rng.uniform(1.1, 1.3)
-            # Dry season (November-April) - lower survival rates  
             else:
                 seasonal_factor = rng.uniform(0.8, 1.0)
             
-            # Add some random noise
             noise = rng.normal(0, 0.05)
-            
             survival_rate = np.clip(base_survival_rate * seasonal_factor + noise, 0.0, 1.0)
-            
-            # Calculate number of wells in this region for this time period
             wells_in_region = np.sum(regions == region)
             
             farm_time_series_data.append({
@@ -134,13 +131,13 @@ def generate_mock_data() -> Dict[str, object]:
                 "survival_rate": survival_rate,
                 "total_wells": wells_in_region,
                 "successful_wells": int(wells_in_region * survival_rate),
-                "water_level_avg_m": rng.uniform(3.0, 8.0),  # Average water level for the region
+                "water_level_avg_m": rng.uniform(3.0, 8.0),
                 "rainfall_mm": rng.uniform(0, 150) if 5 <= month_num <= 10 else rng.uniform(0, 50)
             })
     
     farm_time_series = pd.DataFrame(farm_time_series_data)
 
-    # Mock heatmap points - ALIGNED with Dan Chang district area (same boundaries as wells)
+    # Mock heatmap points
     heat_points = []
     for _ in range(300):
         lat = dan_chang_lat_min + rng.random() * (dan_chang_lat_max - dan_chang_lat_min)
@@ -148,7 +145,6 @@ def generate_mock_data() -> Dict[str, object]:
         weight = float(rng.uniform(0.2, 1.0))
         heat_points.append([lat, lon, weight])
 
-    # Add heatmap points clustered around actual wells for more realistic visualization
     for _, well in wells_df.iterrows():
         num_nearby_points = rng.integers(2, 5)
         for _ in range(num_nearby_points):
@@ -188,8 +184,229 @@ def generate_mock_data() -> Dict[str, object]:
     return {
         "polygons": polygons,
         "wells_df": wells_df,
-        "farm_time_series": farm_time_series,  # NEW: Farm-based time series instead of water_levels
+        "farm_time_series": farm_time_series,
         "heat_points": heat_points,
         "cost_df": cost_df,
         "prob_df": prob_df,
     }
+
+
+def generate_potential_wells(
+    field_polygons: List[Dict],
+    existing_wells_df: pd.DataFrame,
+    num_suggestions: int = 20
+) -> pd.DataFrame:
+    """
+    Generate potential drilling locations around fields.
+    
+    Args:
+        field_polygons: List of field polygon dictionaries
+        existing_wells_df: DataFrame of existing wells
+        num_suggestions: Number of potential locations to generate
+        
+    Returns:
+        DataFrame with potential well locations
+    """
+    rng = np.random.default_rng(42)
+    potential_wells = []
+    
+    if not field_polygons or existing_wells_df.empty:
+        return pd.DataFrame()
+    
+    for field in field_polygons:
+        coords = field.get('coordinates', [])
+        if not coords or len(coords) < 3:
+            continue
+        
+        # Calculate centroid (simple average)
+        centroid_lat = sum(c[0] for c in coords) / len(coords)
+        centroid_lon = sum(c[1] for c in coords) / len(coords)
+        
+        # Generate 2-3 potential wells around this field
+        num_wells_for_field = rng.integers(2, 4)
+        
+        for _ in range(num_wells_for_field):
+            attempts = 0
+            max_attempts = 10
+            
+            while attempts < max_attempts:
+                # Random offset within 2km (roughly 0.018 degrees)
+                offset_lat = rng.uniform(-0.018, 0.018)
+                offset_lon = rng.uniform(-0.018, 0.018)
+                
+                pot_lat = centroid_lat + offset_lat
+                pot_lon = centroid_lon + offset_lon
+                
+                # Check distance from existing wells (should be > 100m ~ 0.001 degrees)
+                if not existing_wells_df.empty:
+                    min_dist = np.min(
+                        np.sqrt(
+                            (existing_wells_df['lat'] - pot_lat)**2 + 
+                            (existing_wells_df['lon'] - pot_lon)**2
+                        )
+                    )
+                    if min_dist < 0.001:  # Too close to existing well
+                        attempts += 1
+                        continue
+                
+                # Generate well characteristics
+                depth_category = rng.choice(['shallow', 'medium', 'deep'], p=[0.3, 0.4, 0.3])
+                
+                if depth_category == 'shallow':
+                    depth = rng.integers(40, 60)
+                    base_probability = rng.uniform(0.5, 0.7)
+                    base_yield = rng.uniform(3, 6)
+                elif depth_category == 'medium':
+                    depth = rng.integers(60, 80)
+                    base_probability = rng.uniform(0.7, 0.85)
+                    base_yield = rng.uniform(6, 10)
+                else:  # deep
+                    depth = rng.integers(80, 120)
+                    base_probability = rng.uniform(0.75, 0.9)
+                    base_yield = rng.uniform(8, 15)
+                
+                # Calculate cost
+                cost_per_meter = 1200
+                drilling_cost = depth * cost_per_meter
+                pump_cost = rng.uniform(30000, 60000)
+                total_cost = drilling_cost + pump_cost
+                
+                potential_wells.append({
+                    'potential_id': f'POT-{len(potential_wells)+1:03d}',
+                    'lat': pot_lat,
+                    'lon': pot_lon,
+                    'field_name': field.get('name', 'Unknown'),
+                    'region': field.get('region', 'Unknown'),
+                    'recommended_depth_m': int(depth),
+                    'depth_category': depth_category,
+                    'success_probability': round(base_probability, 2),
+                    'expected_water_yield_m3h': round(base_yield, 1),
+                    'estimated_cost_thb': int(total_cost),
+                    'drilling_cost_thb': int(drilling_cost),
+                    'priority_score': round(base_probability * base_yield / (total_cost / 100000), 2)
+                })
+                break
+            
+            attempts += 1
+    
+    # Convert to DataFrame and sort by priority
+    potential_df = pd.DataFrame(potential_wells)
+    if not potential_df.empty:
+        potential_df = potential_df.sort_values('priority_score', ascending=False)
+        potential_df = potential_df.head(num_suggestions)
+    
+    return potential_df
+
+
+def calculate_water_demand_gap(
+    field_polygons: List[Dict],
+    existing_wells_df: pd.DataFrame,
+    potential_wells_df: pd.DataFrame
+) -> pd.DataFrame:
+    """
+    Calculate water demand gap for each field considering existing and potential wells.
+    
+    Args:
+        field_polygons: List of field polygons
+        existing_wells_df: Existing wells data
+        potential_wells_df: Potential wells data
+        
+    Returns:
+        DataFrame with demand gap analysis
+    """
+    demand_analysis = []
+    
+    if not field_polygons:
+        return pd.DataFrame()
+    
+    for field in field_polygons:
+        coords = field.get('coordinates', [])
+        if not coords or len(coords) < 3:
+            continue
+        
+        # Calculate centroid
+        centroid_lat = sum(c[0] for c in coords) / len(coords)
+        centroid_lon = sum(c[1] for c in coords) / len(coords)
+        
+        # Estimate field area (very rough, in hectares)
+        # Simple bounding box method
+        lats = [c[0] for c in coords]
+        lons = [c[1] for c in coords]
+        lat_span = max(lats) - min(lats)
+        lon_span = max(lons) - min(lons)
+        area_deg_sq = lat_span * lon_span
+        area_hectares = area_deg_sq * 111 * 111  # Very rough conversion
+        area_rai = area_hectares * 6.25  # Convert to rai
+        
+        # Estimate water demand (m³/day)
+        water_demand_m3_day = area_rai * 25  # 25 m³/rai/day for sugarcane
+        
+        # Find existing wells within 5km
+        if not existing_wells_df.empty:
+            distances = np.sqrt(
+                (existing_wells_df['lat'] - centroid_lat)**2 + 
+                (existing_wells_df['lon'] - centroid_lon)**2
+            )
+            nearby_wells = existing_wells_df[distances < 0.045]  # ~5km
+            successful_wells = nearby_wells[nearby_wells['survived'] == True]
+            
+            # Estimate current water supply (8 hours operation per day)
+            current_supply_m3_day = len(successful_wells) * 8 * 8  # 8 m³/h average
+        else:
+            nearby_wells = pd.DataFrame()
+            successful_wells = pd.DataFrame()
+            current_supply_m3_day = 0
+        
+        # Calculate gap
+        water_gap_m3_day = max(0, water_demand_m3_day - current_supply_m3_day)
+        gap_percentage = (water_gap_m3_day / water_demand_m3_day * 100) if water_demand_m3_day > 0 else 0
+        
+        # Find potential wells for this field
+        if not potential_wells_df.empty:
+            field_potential = potential_wells_df[
+                potential_wells_df['field_name'] == field.get('name', 'Unknown')
+            ]
+            num_potential = len(field_potential)
+            
+            if num_potential > 0:
+                potential_supply_m3_day = field_potential['expected_water_yield_m3h'].sum() * 8
+                gap_after_drilling = max(0, water_gap_m3_day - potential_supply_m3_day)
+            else:
+                potential_supply_m3_day = 0
+                gap_after_drilling = water_gap_m3_day
+        else:
+            num_potential = 0
+            potential_supply_m3_day = 0
+            gap_after_drilling = water_gap_m3_day
+        
+        # Calculate priority level
+        if gap_percentage > 70 and num_potential > 0:
+            priority_level = 'Critical'
+        elif gap_percentage > 50 and num_potential > 0:
+            priority_level = 'High'
+        elif gap_percentage > 30:
+            priority_level = 'Medium'
+        else:
+            priority_level = 'Low'
+        
+        demand_analysis.append({
+            'field_name': field.get('name', 'Unknown'),
+            'region': field.get('region', 'Unknown'),
+            'area_rai': round(area_rai, 2),
+            'water_demand_m3_day': round(water_demand_m3_day, 1),
+            'current_supply_m3_day': round(current_supply_m3_day, 1),
+            'water_gap_m3_day': round(water_gap_m3_day, 1),
+            'gap_percentage': round(gap_percentage, 1),
+            'existing_wells_nearby': len(nearby_wells),
+            'successful_wells_nearby': len(successful_wells),
+            'potential_wells_available': num_potential,
+            'potential_additional_supply_m3_day': round(potential_supply_m3_day, 1),
+            'gap_after_drilling': round(gap_after_drilling, 1),
+            'priority_level': priority_level
+        })
+    
+    df = pd.DataFrame(demand_analysis)
+    if not df.empty:
+        df = df.sort_values('gap_percentage', ascending=False)
+    
+    return df

@@ -87,6 +87,23 @@ class DashboardDataLoader:
             # Phase 4: Generate farm-based time series and additional datasets
             logger.info("🚜 Phase 4: Generating farm time series and additional data...")
             farm_time_series = self._generate_farm_time_series(wells_df)
+
+             # Phase 5: Generate potential drilling locations
+            logger.info("💡 Phase 5: Generating potential drilling locations...")
+            from .mockup import generate_potential_wells, calculate_water_demand_gap
+            
+            potential_wells_df = generate_potential_wells(
+                polygons,
+                wells_df,
+                num_suggestions=25
+            )
+            
+            # Calculate water demand gaps
+            demand_gap_df = calculate_water_demand_gap(
+                polygons,
+                wells_df,
+                potential_wells_df
+            )
             
             # Load mock cost and probability data
             mock_data = generate_mock_data()
@@ -103,6 +120,8 @@ class DashboardDataLoader:
                 "cost_df": cost_df,
                 "prob_df": prob_df,
                 "field_data_df": field_data_df,
+                "potential_wells_df": potential_wells_df,  # NEW
+                "demand_gap_df": demand_gap_df,  # NEW
             }
             
             # Validate and log final results
