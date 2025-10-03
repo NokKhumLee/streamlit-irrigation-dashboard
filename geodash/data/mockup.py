@@ -191,18 +191,23 @@ def generate_mock_data() -> Dict[str, object]:
     }
 
 
+# def generate_potential_wells():
+#     pass
+
+
 def generate_potential_wells(
     field_polygons: List[Dict],
     existing_wells_df: pd.DataFrame,
-    num_suggestions: int = 20
+    num_suggestions: int = 500
 ) -> pd.DataFrame:
     """
-    Generate potential drilling locations around fields.
+    Generate potential drilling locations around (not inside) field polygons.
+    Creates ~500 potential wells distributed around field boundaries.
     
     Args:
         field_polygons: List of field polygon dictionaries
         existing_wells_df: DataFrame of existing wells
-        num_suggestions: Number of potential locations to generate
+        num_suggestions: Number of potential locations to generate (default: 500)
         
     Returns:
         DataFrame with potential well locations
@@ -210,92 +215,156 @@ def generate_potential_wells(
     rng = np.random.default_rng(42)
     potential_wells = []
     
-    if not field_polygons or existing_wells_df.empty:
+    if not field_polygons:
         return pd.DataFrame()
     
-    for field in field_polygons:
+    # Calculate wells per field (distribute evenly)
+    wells_per_field = max(1, num_suggestions // len(field_polygons))
+    
+    for field_idx, field in enumerate(field_polygons):
         coords = field.get('coordinates', [])
         if not coords or len(coords) < 3:
             continue
         
-        # Calculate centroid (simple average)
-        centroid_lat = sum(c[0] for c in coords) / len(coords)
-        centroid_lon = sum(c[1] for c in coords) / len(coords)
+        # Calculate field bounds
+        lats = [c[0] for c in coords]
+        lons = [c[1] for c in coords]
+        min_lat, max_lat = min(lats), max(lats)
+        min_lon, max_lon = min(lons), max(lons)
+        centroid_lat = sum(lats) / len(lats)
+        centroid_lon = sum(lons) / len(lons)
         
-        # Generate 2-3 potential wells around this field
-        num_wells_for_field = rng.integers(2, 4)
+        # Calculate approximate field size
+        field_height = max_lat - min_lat
+        field_width = max_lon - min_lon
         
-        for _ in range(num_wells_for_field):
-            attempts = 0
-            max_attempts = 10
-            
-            while attempts < max_attempts:
-                # Random offset within 2km (roughly 0.018 degrees)
-                offset_lat = rng.uniform(-0.018, 0.018)
-                offset_lon = rng.uniform(-0.018, 0.018)
-                
-                pot_lat = centroid_lat + offset_lat
-                pot_lon = centroid_lon + offset_lon
-                
-                # Check distance from existing wells (should be > 100m ~ 0.001 degrees)
-                if not existing_wells_df.empty:
-                    min_dist = np.min(
-                        np.sqrt(
-                            (existing_wells_df['lat'] - pot_lat)**2 + 
-                            (existing_wells_df['lon'] - pot_lon)**2
-                        )
-                    )
-                    if min_dist < 0.001:  # Too close to existing well
-                        attempts += 1
-                        continue
-                
-                # Generate well characteristics
-                depth_category = rng.choice(['shallow', 'medium', 'deep'], p=[0.3, 0.4, 0.3])
-                
-                if depth_category == 'shallow':
-                    depth = rng.integers(40, 60)
-                    base_probability = rng.uniform(0.5, 0.7)
-                    base_yield = rng.uniform(3, 6)
-                elif depth_category == 'medium':
-                    depth = rng.integers(60, 80)
-                    base_probability = rng.uniform(0.7, 0.85)
-                    base_yield = rng.uniform(6, 10)
-                else:  # deep
-                    depth = rng.integers(80, 120)
-                    base_probability = rng.uniform(0.75, 0.9)
-                    base_yield = rng.uniform(8, 15)
-                
-                # Calculate cost
-                cost_per_meter = 1200
-                drilling_cost = depth * cost_per_meter
-                pump_cost = rng.uniform(30000, 60000)
-                total_cost = drilling_cost + pump_cost
-                
-                potential_wells.append({
-                    'potential_id': f'POT-{len(potential_wells)+1:03d}',
-                    'lat': pot_lat,
-                    'lon': pot_lon,
-                    'field_name': field.get('name', 'Unknown'),
-                    'region': field.get('region', 'Unknown'),
-                    'recommended_depth_m': int(depth),
-                    'depth_category': depth_category,
-                    'success_probability': round(base_probability, 2),
-                    'expected_water_yield_m3h': round(base_yield, 1),
-                    'estimated_cost_thb': int(total_cost),
-                    'drilling_cost_thb': int(drilling_cost),
-                    'priority_score': round(base_probability * base_yield / (total_cost / 100000), 2)
-                })
-                break
-            
+        # Generate wells around this field
+        field_well_count = 0
+        attempts = 0
+        max_attempts = wells_per_field * 20  # Allow many attempts to find good positions
+        
+        while field_well_count < wells_per_field and attempts < max_attempts:
             attempts += 1
+            
+            # Generate position AROUND the field (not inside)
+            # Use circular distribution around centroid, outside field boundaries
+            angle = rng.uniform(0, 2 * np.pi)
+            
+            # Distance from field boundary: 100m to 3km
+            # Convert to degrees (~0.001 to 0.027 degrees)
+            min_distance_deg = 0.001  # ~100m minimum from boundary
+            max_distance_deg = 0.027  # ~3km maximum from boundary
+            
+            # Add field size to ensure we're outside the field
+            buffer_distance = max(field_height, field_width) / 2 + rng.uniform(min_distance_deg, max_distance_deg)
+            
+            offset_lat = buffer_distance * np.cos(angle)
+            offset_lon = buffer_distance * np.sin(angle)
+            
+            pot_lat = centroid_lat + offset_lat
+            pot_lon = centroid_lon + offset_lon
+            
+            # Check if point is actually OUTSIDE the field polygon
+            inside_field = _point_in_polygon_simple(pot_lat, pot_lon, coords)
+            if inside_field:
+                continue  # Skip if inside field
+            
+            # Check minimum distance from existing potential wells (avoid clustering)
+            if len(potential_wells) > 0:
+                min_dist_to_potentials = min(
+                    np.sqrt((w['lat'] - pot_lat)**2 + (w['lon'] - pot_lon)**2)
+                    for w in potential_wells
+                )
+                if min_dist_to_potentials < 0.0005:  # ~50m minimum spacing
+                    continue
+            
+            # Check distance from existing wells (should be > 100m)
+            if not existing_wells_df.empty:
+                min_dist = np.min(
+                    np.sqrt(
+                        (existing_wells_df['lat'] - pot_lat)**2 + 
+                        (existing_wells_df['lon'] - pot_lon)**2
+                    )
+                )
+                if min_dist < 0.001:  # Too close to existing well
+                    continue
+            
+            # Generate well characteristics with realistic distributions
+            depth_category = rng.choice(['shallow', 'medium', 'deep'], p=[0.25, 0.50, 0.25])
+            
+            if depth_category == 'shallow':
+                depth = rng.integers(40, 60)
+                base_probability = rng.uniform(0.55, 0.70)
+                base_yield = rng.uniform(4, 7)
+            elif depth_category == 'medium':
+                depth = rng.integers(60, 100)
+                base_probability = rng.uniform(0.70, 0.85)
+                base_yield = rng.uniform(7, 12)
+            else:  # deep
+                depth = rng.integers(100, 150)
+                base_probability = rng.uniform(0.75, 0.90)
+                base_yield = rng.uniform(10, 16)
+            
+            # Calculate cost
+            cost_per_meter = 1200
+            drilling_cost = depth * cost_per_meter
+            pump_cost = rng.uniform(30000, 60000)
+            total_cost = drilling_cost + pump_cost
+            
+            # Calculate priority score (higher is better)
+            # Factors: probability, yield, cost efficiency
+            priority_score = (base_probability * base_yield) / (total_cost / 100000)
+            
+            potential_wells.append({
+                'potential_id': f'POT-{len(potential_wells)+1:04d}',
+                'lat': pot_lat,
+                'lon': pot_lon,
+                'field_name': field.get('name', 'Unknown'),
+                'region': field.get('region', 'Unknown'),
+                'recommended_depth_m': int(depth),
+                'depth_category': depth_category,
+                'success_probability': round(base_probability, 2),
+                'expected_water_yield_m3h': round(base_yield, 1),
+                'estimated_cost_thb': int(total_cost),
+                'drilling_cost_thb': int(drilling_cost),
+                'priority_score': round(priority_score, 2)
+            })
+            
+            field_well_count += 1
     
     # Convert to DataFrame and sort by priority
     potential_df = pd.DataFrame(potential_wells)
+    
     if not potential_df.empty:
+        # Sort by priority score (highest first)
         potential_df = potential_df.sort_values('priority_score', ascending=False)
+        
+        # Ensure we have exactly num_suggestions (or close to it)
         potential_df = potential_df.head(num_suggestions)
+        
+        # Re-index potential IDs to be sequential
+        potential_df['potential_id'] = [f'POT-{i+1:04d}' for i in range(len(potential_df))]
     
     return potential_df
+
+
+def _point_in_polygon_simple(lat: float, lon: float, polygon_coords: List[List[float]]) -> bool:
+    """
+    Simple point-in-polygon test using ray casting algorithm.
+    
+    Args:
+        lat: Point latitude
+        lon: Point longitude
+        polygon_coords: List of [lat, lon] coordinates
+        
+    Returns:
+        True if point is inside polygon
+    """
+    x, y = lon, lat
+    n = len(polygon_coords)
+    
+
+ 
 
 
 def calculate_water_demand_gap(

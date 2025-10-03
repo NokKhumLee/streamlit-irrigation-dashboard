@@ -51,7 +51,7 @@ def validate_openrouter_key(api_key: str) -> tuple[bool, str]:
 
 def render_api_key_form() -> bool:
     """Render bilingual API key configuration form."""
-    st.info("🔐 **Secure API Key Required / ต้องการ API Key ที่ปลอดภัย**")
+    st.info("🔐 **Secure API Key Required / ต้องการ API Key**")
     
     with st.form("api_key_form"):
         st.markdown("#### 🔑 Enter API Key / ใส่ API Key")
